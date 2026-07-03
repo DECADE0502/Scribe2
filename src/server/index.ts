@@ -127,6 +127,13 @@ const RUNNERS: Record<string, Runner> = {
 
 export function createApp(options: ServerOptions): Hono {
   const app = new Hono();
+
+  // 请求日志:方法 路径 → 状态(耗时);SSE 长连接记录的是建流耗时
+  app.use("/api/*", async (c, next) => {
+    const startedAt = Date.now();
+    await next();
+    console.log(`${c.req.method} ${decodeURIComponent(c.req.path)} → ${c.res.status}(${Date.now() - startedAt}ms)`);
+  });
   const depsFor =
     options.depsFor ??
     ((store: BookStore) => buildDeps(store, loadConfigFrom(path.dirname(options.booksRoot))));
@@ -295,6 +302,9 @@ export function createApp(options: ServerOptions): Hono {
       return c.json({ error: "章号参数不合法(bad_chapter_range)" }, 400);
     }
     const signal = c.req.raw.signal; // 客户端断连即触发:连写在章间停下,不再空烧
+    const bookName = c.req.param("book");
+    const runStartedAt = Date.now();
+    console.log(`▶ 工作流「${workflow}」启动:《${bookName}》args=${JSON.stringify(args).slice(0, 160)}`);
 
     return streamSSE(c, async (stream) => {
       // SSE 写入排队,保证事件顺序
@@ -308,6 +318,7 @@ export function createApp(options: ServerOptions): Hono {
         const io: RunIo = {
           onUsage: (role, usage) => {
             deps.onUsage?.(role, usage);
+            console.log(`  · ${role} 调用完成(prompt ${usage.promptTokens} / completion ${usage.completionTokens} / 缓存命中 ${usage.cachedTokens})`);
             void send("usage", { role, usage });
           },
           onDelta: (delta) => {
@@ -315,9 +326,12 @@ export function createApp(options: ServerOptions): Hono {
           },
         };
         const result = await runner(store, deps, args, io, signal);
+        console.log(`✔ 工作流「${workflow}」完成:《${bookName}》(${((Date.now() - runStartedAt) / 1000).toFixed(1)}s)`);
         await send("done", { workflow, result });
       } catch (e) {
-        await send("error", { message: e instanceof Error ? e.message : String(e) });
+        const message = e instanceof Error ? e.message : String(e);
+        console.error(`✘ 工作流「${workflow}」失败:《${bookName}》${message}`);
+        await send("error", { message });
       }
       await queue;
     });
