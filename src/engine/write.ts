@@ -36,6 +36,8 @@ export interface WriteDeps {
   embedder: EmbeddingModel<string> | null;
   config: Config;
   onUsage?: (role: string, usage: Usage) => void;
+  /** 规划完成回调(CLI 展示用) */
+  onPlan?: (plan: ChapterPlan) => void;
   /** 写作流式回调(CLI 打印用) */
   onDelta?: (delta: string) => void;
   tokenBudget?: number;
@@ -150,6 +152,7 @@ export async function writeChapter(
     generate: (input) =>
       deps.planner({ messages: input.messages, onUsage: (u) => deps.onUsage?.("planner", u) }),
   });
+  deps.onPlan?.(plan);
 
   // ② 检索 [代码]
   const onStage = plan.charactersOnStage.map(stripNew).filter(Boolean);

@@ -7,7 +7,7 @@ import { modelFor, embeddingModelFor } from "./../llm/provider.js";
 import { streamCall, generateCall } from "./../llm/call.js";
 import { recordUsage, summarizeUsage } from "./../llm/usage.js";
 import { BookStore } from "./../store/book.js";
-import { initRepo } from "./../store/git.js";
+import { initRepo, commitAll } from "./../store/git.js";
 import { loadIndex, rebuildIndex } from "./../memory/index.js";
 import { retrieve } from "./../memory/retrieve.js";
 import { writeChapter, type WriteDeps } from "./../engine/write.js";
@@ -66,6 +66,12 @@ function buildDeps(store: BookStore, loaded: LoadedConfig): WriteDeps {
         usage,
         costUsd: costOf(usage),
       });
+    },
+    onPlan: (plan) => {
+      console.log(
+        `规划:${plan.goal}\n  出场:${plan.charactersOnStage.join("、") || "-"}` +
+          `|触碰伏笔:${plan.foreshadowToTouch.join("、") || "-"}|检索词:${plan.queryTerms.join("、") || "-"}`,
+      );
     },
     onDelta: (delta) => process.stdout.write(delta),
   };
@@ -139,7 +145,10 @@ program
     const { from, to } = parseRange(rangeRaw);
     const loaded = loadConfig();
     checkBudget(store, loaded, to - from + 1);
-    if (!fs.existsSync(path.join(store.dir, ".git"))) initRepo(store.dir);
+    if (!fs.existsSync(path.join(store.dir, ".git"))) {
+      initRepo(store.dir);
+      commitAll(store.dir, "init: 建库基线");
+    }
     if (loadIndex(store).length === 0) {
       console.log("索引为空,先重建……");
       await rebuildIndex(store, embeddingModelFor(loaded));
