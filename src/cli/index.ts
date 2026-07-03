@@ -10,7 +10,9 @@ import { BookStore } from "./../store/book.js";
 import { initRepo, commitAll } from "./../store/git.js";
 import { loadIndex, rebuildIndex } from "./../memory/index.js";
 import { retrieve } from "./../memory/retrieve.js";
-import { writeChapter, type WriteDeps } from "./../engine/write.js";
+import { writeChapter, type WriteDeps, type GenerateRole, type StreamRole } from "./../engine/write.js";
+import { onboardTurn, readiness } from "./../engine/onboard.js";
+import * as readline from "node:readline";
 import type { Usage } from "./../types.js";
 
 // ---------- 通用 ----------
@@ -44,25 +46,34 @@ function costOf(usage: Usage): number {
   );
 }
 
+export type AppDeps = WriteDeps & { chatter: StreamRole; auditor: GenerateRole };
+
 /** 生产 deps 装配:config → 各角色模型 → usage 记账。 */
-function buildDeps(store: BookStore, loaded: LoadedConfig): WriteDeps {
+function buildDeps(store: BookStore, loaded: LoadedConfig): AppDeps {
   const writerModel = modelFor(loaded, "writer");
   const plannerModel = modelFor(loaded, "planner");
   const extractorModel = modelFor(loaded, "extractor");
-  const modelIdOf = (role: "writer" | "planner" | "extractor") =>
-    ({ writer: writerModel, planner: plannerModel, extractor: extractorModel })[role].modelId;
+  const auditorModel = modelFor(loaded, "auditor");
+  const modelByRole: Record<string, string> = {
+    writer: writerModel.modelId,
+    planner: plannerModel.modelId,
+    extractor: extractorModel.modelId,
+    auditor: auditorModel.modelId,
+  };
 
   return {
     planner: (input) => generateCall({ model: plannerModel, messages: input.messages, ...(input.onUsage ? { onUsage: input.onUsage } : {}) }),
     writer: (input) => streamCall({ model: writerModel, messages: input.messages, ...(input.onUsage ? { onUsage: input.onUsage } : {}) }),
     extractor: (input) => generateCall({ model: extractorModel, messages: input.messages, ...(input.onUsage ? { onUsage: input.onUsage } : {}) }),
+    chatter: (input) => streamCall({ model: writerModel, messages: input.messages, ...(input.onUsage ? { onUsage: input.onUsage } : {}) }),
+    auditor: (input) => generateCall({ model: auditorModel, messages: input.messages, ...(input.onUsage ? { onUsage: input.onUsage } : {}) }),
     retrieve,
     embedder: embeddingModelFor(loaded),
     config: loaded.config,
     onUsage: (role, usage) => {
       recordUsage(store.dir, {
         role,
-        model: modelIdOf(role === "planner" ? "planner" : role === "writer" ? "writer" : "extractor"),
+        model: modelByRole[role] ?? writerModel.modelId,
         usage,
         costUsd: costOf(usage),
       });
@@ -132,6 +143,64 @@ program
       for (const o of helper.visibleOptions(cmd)) lines.push(pad(helper.optionTerm(o)) + helper.optionDescription(o));
       return `${lines.join("\n")}\n`;
     },
+  });
+
+async function onboardLoop(store: BookStore): Promise<void> {
+  const first = readiness(store);
+  console.log(
+    first.ready
+      ? "底子已齐,可以直接开写;也可以继续补充设定。"
+      : `建书对话开始,还缺:${first.missing.join("、")}。`,
+  );
+  console.log("一行一轮;输入「退出」或 Ctrl+C 结束。");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  rl.setPrompt("你:");
+  rl.prompt();
+  for await (const line of rl) {
+    const message = line.trim();
+    if (!message || message === "退出" || message === "exit") break;
+    const deps = buildDeps(store, loadConfig());
+    process.stdout.write("小克:");
+    const result = await onboardTurn(store, message, {
+      chatter: deps.chatter,
+      extractor: deps.extractor,
+      embedder: deps.embedder,
+      config: deps.config,
+      ...(deps.onUsage ? { onUsage: deps.onUsage } : {}),
+      onDelta: (d) => process.stdout.write(d),
+    });
+    console.log(
+      `\n${result.readiness.ready ? "✓ 底子齐了,可以开写:scribe write <书> 1" : `还缺:${result.readiness.missing.join("、")}`}`,
+    );
+    rl.prompt();
+  }
+  rl.close();
+  console.log("建书对话结束。");
+}
+
+program
+  .command("new")
+  .description("建书:落目录骨架并进入建书对话")
+  .argument("<书名>", "新书名称")
+  .action(async (bookName: string) => {
+    const dir = path.join(process.cwd(), "books", bookName);
+    if (!fs.existsSync(path.join(dir, "book.md"))) {
+      BookStore.create(dir, { name: bookName });
+      initRepo(dir);
+      commitAll(dir, "init: 建库基线");
+      console.log(`已建书 books/${bookName}/`);
+    } else {
+      console.log(`书「${bookName}」已存在,继续建书对话。`);
+    }
+    await onboardLoop(new BookStore(dir));
+  });
+
+program
+  .command("onboard")
+  .description("继续建书对话(补设定/角色/大纲)")
+  .argument("<书名>", "books/ 下的书目录名")
+  .action(async (bookName: string) => {
+    await onboardLoop(resolveBook(bookName));
   });
 
 program
