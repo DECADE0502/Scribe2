@@ -13,6 +13,7 @@ import { retrieve } from "./../memory/retrieve.js";
 import { writeChapter, type WriteDeps, type GenerateRole, type StreamRole } from "./../engine/write.js";
 import { onboardTurn, readiness } from "./../engine/onboard.js";
 import { chatTurn, type ChatDeps } from "./../engine/chat.js";
+import { runAudit } from "./../engine/audit.js";
 import * as readline from "node:readline";
 import type { Usage } from "./../types.js";
 
@@ -270,6 +271,27 @@ program
           (result.dropped.length ? `,预算裁剪:${result.dropped.join("、")}` : ""),
       );
     }
+  });
+
+program
+  .command("audit")
+  .description("审查近 N 章的一致性问题,写入 问题.md(open)")
+  .argument("<书名>", "books/ 下的书目录名")
+  .option("--last <N>", "审查最近 N 章", "5")
+  .action(async (bookName: string, opts: { last: string }) => {
+    const store = resolveBook(bookName);
+    const deps = buildDeps(store, loadConfig());
+    const report = await runAudit(store, { lastN: Number(opts.last) || 5 }, {
+      auditor: deps.auditor,
+      retrieve,
+      embedder: deps.embedder,
+      config: deps.config,
+      ...(deps.onUsage ? { onUsage: deps.onUsage } : {}),
+    });
+    console.log(report.summary || "审查完成。");
+    for (const line of report.lines) console.log(line);
+    if (!report.issues.length) console.log("未发现确凿问题。");
+    else console.log(`已写入 问题.md:新增 ${report.added.length} 条(重复问题自动去重)。`);
   });
 
 program
