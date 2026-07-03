@@ -1,0 +1,28 @@
+{
+  "name": "scribe2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "长篇小说写作引擎:文件即记忆,检索即注入,提示词一等公民",
+  "bin": { "scribe": "./dist/cli/index.js" },
+  "scripts": {
+    "dev": "tsx src/cli/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "ai": "^4.0.0",
+    "commander": "^12.1.0",
+    "gray-matter": "^4.0.3",
+    "hono": "^4.6.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
