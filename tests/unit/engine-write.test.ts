@@ -170,7 +170,7 @@ describe("writeChapter 六步管线", () => {
     expect(gitClean(dir)).toBe(true);
   });
 
-  it("6) 第10章写完自动触发弧压缩,弧/002.md 之后新弧生成", async () => {
+  it("6) 第10章写完触发弧压缩:弧/001.md 被压缩产出覆写(而非追加新弧)", async () => {
     const { store, deps, compressor } = await makeRig();
     // fixture 已有 1-4 章 + 弧1、弧2;补 5-9 章摘要,再写第 10 章
     for (let n = 5; n <= 9; n++) {
@@ -179,7 +179,48 @@ describe("writeChapter 六步管线", () => {
     }
     await writeChapter(store, 10, "", deps);
     expect(compressor).toHaveBeenCalledTimes(1);
-    expect(store.readArc(1)).toBeTruthy(); // 覆盖 1-10 章的弧纲要已写入
-    expect(store.readArc(1)).toContain("镖单残页");
+    expect(store.readArc(1)).toContain("镖单残页"); // 压缩产出
+    expect(store.readArc(1)).not.toContain("以药铺为掩护"); // fixture 旧弧1已被覆写
+  });
+
+  it("6b) 弧文件缺失(此前压缩失败)→ 第10章写完自动补齐;压缩抛错不阻断成章", async () => {
+    const { dir, store, deps, compressor } = await makeRig();
+    for (let n = 5; n <= 9; n++) {
+      store.writeChapter(n, `第${n}章占位正文。`.repeat(60), `占位${n}`);
+      store.writeSummary(n, { brief: `第${n}章简述。`, paragraph: `段落。`, events: [] });
+    }
+    // 模拟历史空洞:把 fixture 预置的弧全删掉
+    for (const f of fs.readdirSync(path.join(dir, "弧"))) fs.rmSync(path.join(dir, "弧", f));
+    // 压缩器第一次抛错,之后正常
+    compressor.mockRejectedValueOnce(new Error("压缩临时失败"));
+    await writeChapter(store, 10, "", deps);
+    // 抛错被吞(警告),成章照常
+    expect(log(dir)[0]!.message).toMatch(/^ch010/);
+    expect(store.readChapter(10).text.length).toBeGreaterThan(800);
+  });
+
+  it("7) 落盘阶段中途失败 → 工作区整体回滚,git 干净,不留半套记忆", async () => {
+    const { dir, store, deps } = await makeRig();
+    // 正文/摘要/角色/状态都已写入之后,时间线写入失败(模拟磁盘故障)
+    (store as { appendTimeline: unknown }).appendTimeline = () => {
+      throw new Error("磁盘写入失败模拟");
+    };
+    await expect(writeChapter(store, 5, "", deps)).rejects.toThrow(/persist_failed/);
+    // 回滚后:第 5 章正文不存在,已写的半套记忆(状态/摘要/角色)全部还原,无新 commit
+    const clean = new BookStore(dir);
+    expect(fs.existsSync(path.join(dir, "章节", "005.md"))).toBe(false);
+    expect(clean.readRecords()["境界"]).not.toContain("临近突破");
+    expect(clean.readCharacter("林尘").state).not.toContain("镖单残页");
+    expect(log(dir)[0]!.message).toBe("init");
+  });
+
+  it("8) 上次 lint 双败留下的 .draft.md,在本章成功写作时被清理,不混进 commit", async () => {
+    const { dir, store, deps } = await makeRig({ writerTexts: ["太短。", "又短。", 千字正文] });
+    await expect(writeChapter(store, 5, "", deps)).rejects.toThrow(/lint_failed/);
+    const draft = path.join(dir, "章节", "005.draft.md");
+    expect(fs.existsSync(draft)).toBe(true);
+    await writeChapter(store, 5, "", deps); // 第三次 writer 调用吐千字 → 成功
+    expect(fs.existsSync(draft)).toBe(false);
+    expect(log(dir)[0]!.message).toMatch(/^ch005/);
   });
 });

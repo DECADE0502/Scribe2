@@ -3,8 +3,9 @@ import type { CoreMessage, EmbeddingModel } from "ai";
 import { z } from "zod";
 import type { Config, StreamEvent, Usage } from "./../types.js";
 import type { BookStore } from "./../store/book.js";
-import { commitAll } from "./../store/git.js";
-import { loadIndex, updateChunks } from "./../memory/index.js";
+import * as path from "node:path";
+import { commitAll, restoreWorktree } from "./../store/git.js";
+import { loadIndex, syncIndex } from "./../memory/index.js";
 import type { retrieve as retrieveFn } from "./../memory/retrieve.js";
 import { loadPrompt, renderTemplate } from "./../template.js";
 import {
@@ -173,7 +174,9 @@ export async function writeChapter(
   const arcNos = store.listArcs();
   const recent = priorChapters.slice(-3).map((n) => store.readChapter(n));
   const recentSet = new Set(recent.map((c) => c.no));
-  const arcCovered = arcNos.length * 10;
+  // 连续覆盖:弧文件有空洞(如压缩曾失败)时,空洞章的摘要仍走中程层,不产生记忆黑洞
+  let arcCovered = 0;
+  while (arcNos.includes(arcCovered / 10 + 1)) arcCovered += 10;
   const { messages, dropped } = assembleWriteContext({
     chapterNo,
     meta,
@@ -236,6 +239,7 @@ export async function writeChapter(
     verdict = lintProse(text, lintOptions);
     if (!verdict.ok) {
       const draftPath = store.chapterPath(chapterNo).replace(/\.md$/, ".draft.md");
+      fs.mkdirSync(path.dirname(draftPath), { recursive: true }); // reset 后 章节/ 目录可能不存在
       fs.writeFileSync(draftPath, text, "utf8");
       throw new Error(
         `第 ${chapterNo} 章两稿均未通过校验(${verdict.reason}:${verdict.detail}),草稿已留存 章节/${pad3(chapterNo)}.draft.md 供人工裁决(lint_failed)`,
@@ -258,55 +262,65 @@ export async function writeChapter(
       deps.extractor({ messages: input.messages, onUsage: (u) => deps.onUsage?.("extractor", u) }),
   });
 
-  // —— 全部落盘(正文与记忆同批写入,同一个 commit)——
-  store.writeChapter(chapterNo, text);
-  store.writeSummary(chapterNo, {
-    brief: delta.summary.oneLiner,
-    paragraph: delta.summary.paragraph,
-    events: delta.summary.keyEvents.map((e) => e.event).filter(Boolean),
-  });
-  for (const [name, state] of Object.entries(delta.characterStates)) {
-    store.upsertCharacter({ name: stripNew(name), state });
-  }
-  if (Object.keys(delta.records).length) store.writeRecords(delta.records);
-  store.applyForeshadow({
-    new: delta.newForeshadow.map((f) => ({
-      label: f.label,
-      chapterNo,
-      note: f.description,
-      characters: f.relatedCharacters,
-    })),
-    paid: delta.foreshadowPaid,
-  });
-  for (const t of delta.timeline) {
-    if (!t.event) continue;
-    store.appendTimeline({ chapterNo, storyTime: t.storyTime, event: t.event, participants: t.participants });
-  }
-
-  // 索引增量:只重算/重嵌入本章变更的块
-  const changedIds = [
-    `summary:${chapterNo}`,
-    ...Object.keys(delta.characterStates).flatMap((n) => [
-      `character:${stripNew(n)}`,
-      `character_state:${stripNew(n)}`,
-    ]),
-    ...Object.keys(delta.records).map((k) => `record:${k}`),
-    ...delta.newForeshadow.map((f) => `foreshadow:${f.label}`),
-    ...delta.foreshadowPaid.map((l) => `foreshadow:${l}`),
-    ...delta.timeline.filter((t) => t.event).map((t) => `timeline:${t.storyTime}|${t.event}`),
-  ];
-  await updateChunks(store, deps.embedder, changedIds);
-
-  // 每满 10 章压缩一份弧纲要(失败只警告,不吞掉整章成果)
-  if (chapterNo % 10 === 0) {
-    try {
-      await compressArc(store, chapterNo, deps);
-    } catch (e) {
-      console.warn(`弧压缩失败,可稍后用 reindex/重写触发:${e instanceof Error ? e.message : String(e)}`);
+  // —— 全部落盘(正文与记忆同批写入,同一个 commit);中途任何失败整体回滚,不留半套记忆 ——
+  try {
+    store.writeChapter(chapterNo, text);
+    store.writeSummary(chapterNo, {
+      brief: delta.summary.oneLiner,
+      paragraph: delta.summary.paragraph,
+      events: delta.summary.keyEvents.map((e) => e.event).filter(Boolean),
+    });
+    for (const [name, state] of Object.entries(delta.characterStates)) {
+      store.upsertCharacter({ name: stripNew(name), state });
     }
-  }
+    if (Object.keys(delta.records).length) store.writeRecords(delta.records);
+    store.applyForeshadow({
+      new: delta.newForeshadow.map((f) => ({
+        label: f.label,
+        chapterNo,
+        note: f.description,
+        characters: f.relatedCharacters,
+      })),
+      paid: delta.foreshadowPaid,
+    });
+    for (const t of delta.timeline) {
+      if (!t.event) continue;
+      store.appendTimeline({ chapterNo, storyTime: t.storyTime, event: t.event, participants: t.participants });
+    }
 
-  commitAll(store.dir, `ch${pad3(chapterNo)}: 写作`);
+    // 索引增量:按文本差异同步——与落盘侧的消毒/归一化天然一致,不再手拼 id
+    await syncIndex(store, deps.embedder);
+
+    // 每满 10 章补齐所有缺失的弧纲要(含此前压缩失败留下的空洞);当前弧总是重压;失败只警告
+    if (chapterNo % 10 === 0) {
+      const have = new Set(store.listArcs());
+      const currentArc = chapterNo / 10;
+      for (let arcNo = 1; arcNo <= currentArc; arcNo++) {
+        if (arcNo < currentArc && have.has(arcNo)) continue;
+        try {
+          await compressArc(store, arcNo * 10, deps);
+        } catch (e) {
+          console.warn(
+            `弧 ${arcNo} 压缩失败,下个 10 章节点会自动补跑:${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+    }
+
+    // 本章此前 lint 双败留下的草稿已无意义,清掉,免得被 commit -A 收编
+    fs.rmSync(store.chapterPath(chapterNo).replace(/\.md$/, ".draft.md"), { force: true });
+    commitAll(store.dir, `ch${pad3(chapterNo)}: 写作`);
+  } catch (e) {
+    restoreWorktree(store.dir);
+    try {
+      await syncIndex(store, deps.embedder);
+    } catch {
+      /* 索引可 reindex 自愈,恢复失败不掩盖主错误 */
+    }
+    throw new Error(
+      `第 ${chapterNo} 章落盘阶段失败,工作区已回滚到上一提交:${e instanceof Error ? e.message : String(e)}(persist_failed)`,
+    );
+  }
   return { chapterNo, text, plan, delta, dropped, rewritten };
 }
 

@@ -29,14 +29,31 @@ function extractJsonFor(n: number): string {
   });
 }
 
-type AuditorMode = "clean" | "critical-latest" | "critical-historical";
+type AuditorMode =
+  | "clean"
+  | "critical-latest"
+  | "critical-historical"
+  | "fix-then-historical" // 第一轮 critical@最新,修复后第二轮 historical critical
+  | "throws";
 
-function auditJsonFor(mode: AuditorMode, latest: number): string {
+function auditJsonFor(mode: AuditorMode, latest: number, call: number): string {
   if (mode === "clean") return JSON.stringify({ issues: [], summary: "未发现确凿矛盾" });
   if (mode === "critical-latest") {
     return JSON.stringify({
       issues: [{ type: "continuity", severity: "critical", chapterNo: latest, note: `第${latest}章严重矛盾:主角凭空瞬移` }],
       summary: "1 处严重",
+    });
+  }
+  if (mode === "fix-then-historical") {
+    if (call === 1) {
+      return JSON.stringify({
+        issues: [{ type: "continuity", severity: "critical", chapterNo: latest, note: `第${latest}章严重矛盾:主角凭空瞬移` }],
+        summary: "1 处严重",
+      });
+    }
+    return JSON.stringify({
+      issues: [{ type: "setting", severity: "critical", chapterNo: 1, note: "修复引入:第1章境界体系被打脸" }],
+      summary: "1 处严重(历史)",
     });
   }
   return JSON.stringify({
@@ -83,7 +100,10 @@ async function makeRig(auditorMode: AuditorMode = "clean") {
     auditor: async (input) => {
       auditorCalls.push(input.messages);
       input.onUsage?.(usage());
-      return { text: auditJsonFor(auditorMode, new BookStore(dir).listChapters().at(-1) ?? 1) };
+      if (auditorMode === "throws") throw new Error("审查服务不可用");
+      return {
+        text: auditJsonFor(auditorMode, new BookStore(dir).listChapters().at(-1) ?? 1, auditorCalls.length),
+      };
     },
     retrieve: vi.fn(retrieve),
     embedder: null,
@@ -131,6 +151,22 @@ describe("writeMany + 护栏", () => {
     expect(store.listChapters()).toEqual([1, 2, 3, 4, 5]);
   });
 
+  it("2b) 修复后第二轮审出历史章 critical → 停下并入 问题.md(不再整体丢弃)", async () => {
+    const { store, deps } = await makeRig("fix-then-historical");
+    const result = await writeMany(store, 1, 6, deps);
+    expect(result.stoppedAt).toBe(6);
+    expect(result.reason).toMatch(/历史|historical/);
+    expect(store.listOpenIssues().some((i) => i.note.includes("境界体系被打脸"))).toBe(true);
+  });
+
+  it("2c) 护栏审查自身抛错 → 不崩溃,返回 guard_failed 报告", async () => {
+    const { store, deps, writerCalls } = await makeRig("throws");
+    const result = await writeMany(store, 1, 6, deps);
+    expect(writerCalls).toHaveLength(5);
+    expect(result.completed).toEqual([1, 2, 3, 4, 5]);
+    expect(result.reason).toMatch(/guard_failed/);
+  });
+
   it("4) 成本超限 → 停在开写前", async () => {
     const { store, deps, writerCalls } = await makeRig("clean");
     const result = await writeMany(store, 1, 6, { ...deps, runBudgetUsd: 1, costProbe: () => 9 });
@@ -161,5 +197,23 @@ describe("fixLatest", () => {
     initRepo(emptyDir);
     commitAll(emptyDir, "init");
     await expect(fixLatest(empty, deps)).rejects.toThrow(/no_chapter_to_fix/);
+  });
+
+  it("6) fixLatest 重写失败 → 恢复到 reset 前的 HEAD,原章无损", async () => {
+    const { dir, store, deps } = await makeRig("clean");
+    await writeChapter(store, 1, "", deps);
+    const textBefore = store.readChapter(1).text;
+    const headBefore = log(dir)[0]!.hash;
+    // 让修复时的重写必然 lint 双败:后续 writer 只吐短稿
+    (deps as { writer: unknown }).writer = (input: { messages: unknown; onUsage?: (u: Usage) => void }) =>
+      (async function* (): AsyncGenerator<StreamEvent> {
+        yield { type: "text_delta", delta: "太短的重写稿。" };
+        input.onUsage?.({ promptTokens: 1, completionTokens: 1, cachedTokens: 0 });
+      })();
+    await expect(fixLatest(store, deps)).rejects.toThrow(/fix_failed/);
+    // 原章与 HEAD 恢复如初
+    expect(store.listChapters()).toEqual([1]);
+    expect(store.readChapter(1).text).toBe(textBefore);
+    expect(log(dir)[0]!.hash).toBe(headBefore);
   });
 });

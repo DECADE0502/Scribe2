@@ -1,6 +1,6 @@
 import type { BookStore } from "./../store/book.js";
-import { commitAll, resetToBefore } from "./../store/git.js";
-import { rebuildIndex } from "./../memory/index.js";
+import { commitAll, resetToBefore, headOf, resetToCommit } from "./../store/git.js";
+import { syncIndex } from "./../memory/index.js";
 import { writeChapter, type GenerateRole, type WriteDeps, type WriteResult } from "./write.js";
 import { collectAuditIssues, issueInputOf, type AuditDeps } from "./audit.js";
 
@@ -42,10 +42,23 @@ export async function fixLatest(
   const keep =
     issues ??
     store.listOpenIssues().map((i) => ({ type: i.type, chapterNo: i.chapterNo, note: i.note }));
+  const origHead = headOf(store.dir); // 修复失败要能回到出发点,不能把书留在"少一章"状态
   resetToBefore(store.dir, `ch${pad3(latest)}`);
-  store.addIssues(keep);
-  await rebuildIndex(store, deps.embedder); // .index 不入 git,reset 后必须重建
-  return writeChapter(store, latest, "", deps);
+  try {
+    store.addIssues(keep);
+    await syncIndex(store, deps.embedder); // .index 不入 git,reset 后必须同步
+    return await writeChapter(store, latest, "", deps);
+  } catch (e) {
+    resetToCommit(store.dir, origHead);
+    try {
+      await syncIndex(store, deps.embedder);
+    } catch {
+      /* 索引可 reindex 自愈 */
+    }
+    throw new Error(
+      `修复第 ${latest} 章失败,书已恢复原状:${e instanceof Error ? e.message : String(e)}(fix_failed)`,
+    );
+  }
 }
 
 /** 护栏审查(SPEC §3.3)。返回 null=放行;返回字符串=停下的中文原因。 */
@@ -72,12 +85,25 @@ async function guardAudit(store: BookStore, deps: ManyDeps, latest: number): Pro
   );
   if (criticalLatest.length) {
     await fixLatest(store, deps, first.issues.map(issueInputOf));
+    // 第二轮结果同样走完整三分支(SPEC §3.3),不能整体丢弃
     const second = await collectAuditIssues(store, GUARD_RANGE, auditDeps);
-    const still = second.issues.filter((i) => i.severity === "critical" && i.chapterNo === latest);
-    if (still.length) {
+    const stillLatest = second.issues.filter((i) => i.severity === "critical" && i.chapterNo === latest);
+    if (stillLatest.length) {
       store.addIssues(second.issues.map(issueInputOf));
       commitAll(store.dir, "audit: 护栏修复后仍 critical,停下");
-      return `第${latest}章自动修复一次后仍有 critical:${still[0]!.note}(guard_critical)`;
+      return `第${latest}章自动修复一次后仍有 critical:${stillLatest[0]!.note}(guard_critical)`;
+    }
+    const secondHistorical = second.issues.filter(
+      (i) => i.severity === "critical" && i.chapterNo < latest,
+    );
+    if (secondHistorical.length) {
+      store.addIssues(second.issues.map(issueInputOf));
+      commitAll(store.dir, "audit: 护栏修复后审出历史章 critical,停下");
+      return `修复后复审发现历史章 critical(第${secondHistorical[0]!.chapterNo}章):${secondHistorical[0]!.note}。请人工决策(historical_critical)`;
+    }
+    if (second.issues.length) {
+      store.addIssues(second.issues.map(issueInputOf));
+      commitAll(store.dir, `audit: 护栏复审 warning ${second.issues.length} 条`);
     }
     return null;
   }
@@ -121,7 +147,17 @@ export async function writeMany(
     completed.push(no);
     // 章号 %5 触发(而非本次运行计数):断点续写 3..6 也能在第 5 章按时护栏
     if (no % GUARD_EVERY === 0) {
-      const stop = await guardAudit(store, deps, no);
+      let stop: string | null;
+      try {
+        stop = await guardAudit(store, deps, no);
+      } catch (e) {
+        // 护栏自身出错(审查服务/修复失败)不吞掉已完成的章,报告并停下
+        return {
+          completed,
+          stoppedAt: no + 1,
+          reason: `护栏审查失败:${e instanceof Error ? e.message : String(e)}(guard_failed)`,
+        };
+      }
       if (stop) return { completed, stoppedAt: no + 1, reason: stop };
     }
   }
