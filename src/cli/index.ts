@@ -12,6 +12,7 @@ import { loadIndex, rebuildIndex } from "./../memory/index.js";
 import { retrieve } from "./../memory/retrieve.js";
 import { writeChapter, type WriteDeps, type GenerateRole, type StreamRole } from "./../engine/write.js";
 import { onboardTurn, readiness } from "./../engine/onboard.js";
+import { chatTurn, type ChatDeps } from "./../engine/chat.js";
 import * as readline from "node:readline";
 import type { Usage } from "./../types.js";
 
@@ -201,6 +202,43 @@ program
   .argument("<书名>", "books/ 下的书目录名")
   .action(async (bookName: string) => {
     await onboardLoop(resolveBook(bookName));
+  });
+
+program
+  .command("chat")
+  .description("与责编助手讨论本书(零副作用,不改任何文件)")
+  .argument("<书名>", "books/ 下的书目录名")
+  .argument("[消息...]", "一次性提问;省略则进入对话循环")
+  .action(async (bookName: string, messageParts: string[]) => {
+    const store = resolveBook(bookName);
+    const deps = buildDeps(store, loadConfig());
+    const chatDeps: ChatDeps = {
+      chatter: deps.chatter,
+      retrieve,
+      embedder: deps.embedder,
+      config: deps.config,
+      ...(deps.onUsage ? { onUsage: deps.onUsage } : {}),
+      onDelta: (d) => process.stdout.write(d),
+    };
+    const oneShot = (messageParts ?? []).join(" ").trim();
+    if (oneShot) {
+      await chatTurn(store, oneShot, chatDeps);
+      console.log("");
+      return;
+    }
+    console.log("进入对话(输入「退出」或 Ctrl+C 结束):");
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.setPrompt("你:");
+    rl.prompt();
+    for await (const line of rl) {
+      const message = line.trim();
+      if (!message || message === "退出" || message === "exit") break;
+      process.stdout.write("助手:");
+      await chatTurn(store, message, chatDeps);
+      console.log("");
+      rl.prompt();
+    }
+    rl.close();
   });
 
 program
