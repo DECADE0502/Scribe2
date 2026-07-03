@@ -10,6 +10,9 @@
 
 **工作目录:** `D:\desktop\scribe2`。命令从仓库根跑。**secrets.env 已含 DEEPSEEK_API_KEY,严禁入库(.gitignore 已覆盖)。**
 
+**参考代码:** `docs/reference/` 内是旧项目验证过的实现(llm-call/retry/deepseek-metadata/
+SillyTavern 解析四件套),移植时参考,不参与编译,不 import。
+
 **Live 测试约定:**
 - 文件名 `tests/live/*.live.test.ts`,顶部 `describe.skipIf(!process.env.DEEPSEEK_API_KEY)`;
 - `pnpm test` 只跑 unit(排除 live);`pnpm test:live` 跑 live(加载 secrets.env);
@@ -484,7 +487,9 @@ import { BookStore } from "../../src/store/book.js";
 
 - [ ] 实现 commander:`write <书> <章号|a..b> [-m 指令]`(流式打印 delta)、`status <书>`、
   `reindex <书>`;装配生产 deps(config→provider→roles;usage 记账接 onUsage;预算检查:估算超 singleBudgetUsd 拒绝)。
-- [ ] 提交 `feat(cli): write/status/reindex`。
+- [ ] **全中文输出**:CLI 的提示/进度/错误一律中文,错误格式 `中文说明(错误码)`(SPEC §6);
+  cli-smoke 测试断言 `--help` 与一条错误路径输出含中文、不含裸英文句子。
+- [ ] 提交 `feat(cli): write/status/reindex(全中文输出)`。
 
 ### ✅ Gate C(阶段3 live 验收——第一次真写作)
 
@@ -571,7 +576,7 @@ import { BookStore } from "../../src/store/book.js";
 
 ### Task 20: SillyTavern 导入
 
-**Files:** Create `src/import/sillytavern.ts`;Modify CLI;Test `tests/unit/import-st.test.ts` + fixtures(从旧仓 `D:\desktop\Scribe-gh\packages\server\tests` 拷两个脱敏样例 json;解析逻辑参考旧仓 `packages/server/src/ai/import/import-service.ts` 移植,输出端改写文件)
+**Files:** Create `src/import/sillytavern.ts`;Modify CLI;Test `tests/unit/import-st.test.ts` + fixtures(自造两个最小样例 json;解析逻辑从 **`docs/reference/`** 里的 `import-service.ts` / `sillytavern-detect.ts` / `sillytavern-worldbook.ts` / `sillytavern-preset.ts` 移植——这些是旧仓验证过的解析器,输出端改成写文件)
 
 - [ ] 测试:角色卡 → 角色/<名>.md(description/personality→基底);世界书 → 世界书/*.md(key→keys,constant 保留);导入后索引更新;未知 json 报错不落盘。提交 `feat(import): sillytavern cards + worldbooks`。
 
@@ -598,7 +603,7 @@ import { BookStore } from "../../src/store/book.js";
 
 **Files:** Create `web/`(Vite+React+CodeMirror:书库/工作台三栏/设置)
 
-- [ ] 手测清单驱动(流式显示/编辑保存/记忆浏览)。提交。
+- [ ] 手测清单驱动(流式显示/编辑保存/记忆浏览)。**UI 文案全中文,无英文残留**(SPEC §6)。提交。
 
 ### ✅ Gate F:**🧑 用户浏览器验收**(最终)。
 
