@@ -5,3 +5,4 @@ config.json
 secrets.env
 *.log
 .DS_Store
+.omc/
