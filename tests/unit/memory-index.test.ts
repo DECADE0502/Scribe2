@@ -59,12 +59,14 @@ describe("memory/index", () => {
     expect(after.filter((c) => Array.isArray(c.embedding))).toHaveLength(updated.length);
   });
 
-  it("文件里的坏行跳过,不炸", async () => {
+  it("文件里的坏行跳过,不炸;合法 JSON 但缺 keys/type 的行同样跳过", async () => {
     const store = tmpStore();
     await rebuildIndex(store, null);
     const file = path.join(store.dir, ".index", "chunks.jsonl");
     const before = loadIndex(store).length;
     fs.appendFileSync(file, "不是json的坏行\n", "utf8");
+    fs.appendFileSync(file, '{"id":"x:1","text":"缺 keys 与 type 的行"}\n', "utf8");
+    fs.appendFileSync(file, '{"id":"x:2","text":"type 非法","keys":[],"type":123}\n', "utf8");
     expect(loadIndex(store)).toHaveLength(before);
   });
 

@@ -25,7 +25,15 @@ export function loadIndex(store: BookStore): Chunk[] {
     if (!line.trim()) continue;
     try {
       const parsed = JSON.parse(line) as Chunk;
-      if (typeof parsed.id === "string" && typeof parsed.text === "string") out.push(parsed);
+      // keys/type 缺失的"合法 JSON 坏行"进检索会 TypeError,与其他坏行同样跳过
+      if (
+        typeof parsed.id === "string" &&
+        typeof parsed.text === "string" &&
+        Array.isArray(parsed.keys) &&
+        typeof parsed.type === "string"
+      ) {
+        out.push(parsed);
+      }
     } catch {
       continue;
     }

@@ -55,13 +55,23 @@ function cosine(a: number[], b: number[]): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-/** 实体×keys 双向子串命中;多命中递增(1-0.5^n),封顶趋近 1。 */
+/**
+ * 实体×keys 双向子串命中;多命中递增(1-0.5^n),封顶趋近 1。
+ * 双方都要求 ≥2 字:单字 key(如「道」)会被任何含该字的实体误命中,系统性污染榜单。
+ */
 function keywordScore(entities: string[], keys: string[]): number {
   let hits = 0;
   for (const entity of entities) {
     const e = entity.trim();
-    if (!e) continue;
-    if (keys.some((k) => k && (k.includes(e) || e.includes(k)))) hits += 1;
+    if (e.length < 2) continue;
+    if (
+      keys.some((raw) => {
+        const k = raw?.trim() ?? "";
+        return k.length >= 2 && (k.includes(e) || e.includes(k));
+      })
+    ) {
+      hits += 1;
+    }
   }
   return hits === 0 ? 0 : 1 - 0.5 ** hits;
 }
@@ -90,10 +100,6 @@ export async function retrieve(input: RetrieveInput): Promise<ScoredChunk[]> {
     const vectors = await embedTexts(input.embedder, [input.query.text]);
     queryVector = vectors?.[0] ?? null;
   }
-  const hasVector = queryVector !== null;
-  const wCos = hasVector ? 0.45 : 0;
-  const wKw = hasVector ? 0.35 : 0.6;
-  const wRec = hasVector ? 0.2 : 0.4;
 
   const onStage = new Set((input.query.charactersOnStage ?? []).map((s) => s.trim()).filter(Boolean));
 
@@ -101,7 +107,13 @@ export async function retrieve(input: RetrieveInput): Promise<ScoredChunk[]> {
   const scored: ScoredChunk[] = [];
 
   for (const chunk of input.index) {
-    const cos = queryVector && chunk.embedding ? cosine(queryVector, chunk.embedding) : 0;
+    // 权重按块降级,不做全局切换:增量嵌入的过渡期里,大量无向量老块
+    // 若也按向量权重计分,关键词分会被腰斩、系统性沉底
+    const useVector = queryVector !== null && Array.isArray(chunk.embedding);
+    const wCos = useVector ? 0.45 : 0;
+    const wKw = useVector ? 0.35 : 0.6;
+    const wRec = useVector ? 0.2 : 0.4;
+    const cos = useVector ? cosine(queryVector!, chunk.embedding!) : 0;
     const kw = keywordScore(input.query.entities, chunk.keys);
     const rec = recencyScore(chunk, input.currentChapter);
     const relevance = wCos * cos + wKw * kw;
@@ -119,7 +131,8 @@ export async function retrieve(input: RetrieveInput): Promise<ScoredChunk[]> {
       pinned.push(entry);
       continue;
     }
-    if (relevance < threshold) continue;
+    // open 问题恒注入(SPEC §2.4:issue≤全部 open),不受相关性阈值限制
+    if (relevance < threshold && chunk.type !== "issue") continue;
     scored.push(entry);
   }
 
@@ -129,7 +142,8 @@ export async function retrieve(input: RetrieveInput): Promise<ScoredChunk[]> {
   const counts: Partial<Record<Chunk["type"], number>> = {};
   for (const entry of scored) {
     const used = counts[entry.chunk.type] ?? 0;
-    if (used >= quotas[entry.chunk.type]) continue;
+    // 未知类型(索引脏数据)配额按 0 处理,不得绕过榜单
+    if (used >= (quotas[entry.chunk.type] ?? 0)) continue;
     counts[entry.chunk.type] = used + 1;
     taken.push(entry);
   }

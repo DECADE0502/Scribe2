@@ -110,6 +110,46 @@ describe("retrieve 混合打分", () => {
     expect(out.some((s) => s.chunk.id === "worldbook:反向")).toBe(false); // cos=0 低于阈值
   });
 
+  it("8) issue 块不受阈值限制:open 问题恒注入(SPEC §2.4 配额表)", async () => {
+    const index = [
+      chunk({ type: "issue", id: "issue:x1", keys: ["continuity"], chapterNo: 3, text: "英文枚举键的问题" }),
+      chunk({ type: "worldbook", keys: ["无关键"] }),
+    ];
+    const out = await retrieve({
+      index, query: { text: "林尘去黑水镇", entities: ["黑水镇"] },
+      currentChapter: 10, embedder: null,
+    });
+    expect(out.some((s) => s.chunk.id === "issue:x1")).toBe(true); // issue 恒注入
+    expect(out.some((s) => s.chunk.type === "worldbook")).toBe(false); // 其他类型照旧被阈值挡
+  });
+
+  it("9) 超短 key(单字)不再双向误伤", async () => {
+    const index = [
+      chunk({ type: "worldbook", id: "worldbook:单字", keys: ["道"] }),
+      chunk({ type: "worldbook", id: "worldbook:正常", keys: ["黑水镇"] }),
+    ];
+    const out = await retrieve({
+      index, query: { text: "", entities: ["知道吗", "黑水镇"] },
+      currentChapter: 10, embedder: null,
+    });
+    expect(out.some((s) => s.chunk.id === "worldbook:单字")).toBe(false);
+    expect(out.some((s) => s.chunk.id === "worldbook:正常")).toBe(true);
+  });
+
+  it("10) 混合向量态:无向量块按 0.6/0.4 权重计分,不被全局切换腰斩", async () => {
+    const index = [
+      chunk({ type: "worldbook", id: "worldbook:有向量", keys: [], embedding: [1, 0, 0] }),
+      chunk({ type: "summary", id: "summary:无向量", keys: ["灯会"], chapterNo: 50 }),
+    ];
+    const out = await retrieve({
+      index, query: { text: "语义查询", entities: ["灯会"] },
+      currentChapter: 50, embedder: fixedEmbedder([1, 0, 0]),
+    });
+    const kwOnly = out.find((s) => s.chunk.id === "summary:无向量")!;
+    // 单命中在关键词权重下:0.6*0.5 + 0.4*1 = 0.7;若被腰斩会是 0.175+0.2=0.375
+    expect(kwOnly.score).toBeGreaterThan(0.6);
+  });
+
   it("7) charactersOnStage:对应 character_state 无条件置顶", async () => {
     const index = [
       chunk({ type: "worldbook", id: "worldbook:高分", keys: ["黑水镇"] }),

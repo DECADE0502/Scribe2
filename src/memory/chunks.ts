@@ -82,12 +82,21 @@ export function chunksFromBook(store: BookStore): Chunk[] {
     });
   }
 
+  // issue 的 type 是英文枚举,中文查询实体永远打不中——keys 给中文词 + 章号标签
+  const ISSUE_TYPE_ZH: Record<string, string> = {
+    continuity: "连贯性",
+    character: "角色",
+    foreshadow: "伏笔",
+    setting: "设定",
+    perspective: "视角",
+    pacing: "节奏",
+  };
   for (const issue of store.listOpenIssues()) {
     chunks.push({
       id: `issue:${issue.id}`,
       type: "issue",
-      text: `未解决问题(${issue.type},第${issue.chapterNo}章):${issue.note}`,
-      keys: [issue.type],
+      text: `未解决问题(${ISSUE_TYPE_ZH[issue.type] ?? issue.type},第${issue.chapterNo}章):${issue.note}`,
+      keys: [ISSUE_TYPE_ZH[issue.type] ?? issue.type, `第${issue.chapterNo}章`],
       chapterNo: issue.chapterNo,
       updatedAt: now,
     });
