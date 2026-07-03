@@ -47,6 +47,17 @@ export async function rebuildIndex(
   return chunks;
 }
 
+/** 按文本差异自动找出变更 id 再增量更新——手工/网页编辑保存后不知道改了哪些块时用。 */
+export async function syncIndex(
+  store: BookStore,
+  embedder: EmbeddingModel<string> | null,
+): Promise<Chunk[]> {
+  const fresh = chunksFromBook(store);
+  const old = new Map(loadIndex(store).map((c) => [c.id, c]));
+  const changed = fresh.filter((c) => old.get(c.id)?.text !== c.text).map((c) => c.id);
+  return updateChunks(store, embedder, changed);
+}
+
 /**
  * 增量更新:重新抽取全部 chunk(纯本地、便宜),但只对指定 id 重嵌入,
  * 其余条目沿用旧索引里的向量(嵌入才是要省的成本)。

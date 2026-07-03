@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "tsx src/cli/index.ts",
+    "serve": "tsx src/server/start.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -17,6 +18,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^0.2.0",
+    "@hono/node-server": "^2.0.8",
     "ai": "^4.0.0",
     "commander": "^12.1.0",
     "gray-matter": "^4.0.3",

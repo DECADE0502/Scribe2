@@ -3,14 +3,13 @@ import { Command, type Help } from "commander";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadConfigFrom, type LoadedConfig } from "./../config.js";
-import { modelFor, embeddingModelFor } from "./../llm/provider.js";
-import { streamCall, generateCall } from "./../llm/call.js";
-import { recordUsage, summarizeUsage } from "./../llm/usage.js";
+import { embeddingModelFor } from "./../llm/provider.js";
+import { summarizeUsage } from "./../llm/usage.js";
 import { BookStore } from "./../store/book.js";
 import { initRepo, commitAll } from "./../store/git.js";
 import { loadIndex, rebuildIndex } from "./../memory/index.js";
 import { retrieve } from "./../memory/retrieve.js";
-import { writeChapter, type WriteDeps, type GenerateRole, type StreamRole } from "./../engine/write.js";
+import { writeChapter } from "./../engine/write.js";
 import { onboardTurn, readiness } from "./../engine/onboard.js";
 import { chatTurn, type ChatDeps } from "./../engine/chat.js";
 import { runAudit } from "./../engine/audit.js";
@@ -18,8 +17,8 @@ import { reviseSegment } from "./../engine/revise.js";
 import { writeMany, fixLatest } from "./../engine/many.js";
 import { importSillyTavern } from "./../import/sillytavern.js";
 import { exportBook, exportChapter, rollbackBook, type ExportFormat } from "./../engine/export.js";
+import { buildDeps as buildBaseDeps, type AppDeps } from "./../deps.js";
 import * as readline from "node:readline";
-import type { Usage } from "./../types.js";
 
 // ---------- 通用 ----------
 
@@ -40,50 +39,10 @@ function loadConfig(): LoadedConfig {
   return loadConfigFrom(process.cwd());
 }
 
-/** DeepSeek 系价目(美元/百万 token)估算;未知模型按同价记,账本只求量级正确。 */
-const PRICE = { promptMiss: 0.28, promptCacheHit: 0.028, completion: 0.42 };
-
-function costOf(usage: Usage): number {
-  const miss = Math.max(0, usage.promptTokens - usage.cachedTokens);
-  return (
-    (miss * PRICE.promptMiss +
-      usage.cachedTokens * PRICE.promptCacheHit +
-      usage.completionTokens * PRICE.completion) / 1_000_000
-  );
-}
-
-export type AppDeps = WriteDeps & { chatter: StreamRole; auditor: GenerateRole };
-
-/** 生产 deps 装配:config → 各角色模型 → usage 记账。 */
+/** CLI 版 deps = 共享装配 + 终端打印(规划行 / 流式 delta)。 */
 function buildDeps(store: BookStore, loaded: LoadedConfig): AppDeps {
-  const writerModel = modelFor(loaded, "writer");
-  const plannerModel = modelFor(loaded, "planner");
-  const extractorModel = modelFor(loaded, "extractor");
-  const auditorModel = modelFor(loaded, "auditor");
-  const modelByRole: Record<string, string> = {
-    writer: writerModel.modelId,
-    planner: plannerModel.modelId,
-    extractor: extractorModel.modelId,
-    auditor: auditorModel.modelId,
-  };
-
   return {
-    planner: (input) => generateCall({ model: plannerModel, messages: input.messages, ...(input.onUsage ? { onUsage: input.onUsage } : {}) }),
-    writer: (input) => streamCall({ model: writerModel, messages: input.messages, ...(input.onUsage ? { onUsage: input.onUsage } : {}) }),
-    extractor: (input) => generateCall({ model: extractorModel, messages: input.messages, ...(input.onUsage ? { onUsage: input.onUsage } : {}) }),
-    chatter: (input) => streamCall({ model: writerModel, messages: input.messages, ...(input.onUsage ? { onUsage: input.onUsage } : {}) }),
-    auditor: (input) => generateCall({ model: auditorModel, messages: input.messages, ...(input.onUsage ? { onUsage: input.onUsage } : {}) }),
-    retrieve,
-    embedder: embeddingModelFor(loaded),
-    config: loaded.config,
-    onUsage: (role, usage) => {
-      recordUsage(store.dir, {
-        role,
-        model: modelByRole[role] ?? writerModel.modelId,
-        usage,
-        costUsd: costOf(usage),
-      });
-    },
+    ...buildBaseDeps(store, loaded),
     onPlan: (plan) => {
       console.log(
         `规划:${plan.goal}\n  出场:${plan.charactersOnStage.join("、") || "-"}` +
