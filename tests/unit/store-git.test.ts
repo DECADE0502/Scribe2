@@ -46,6 +46,22 @@ describe("store/git", () => {
     expect(fs.readFileSync(path.join(dir, "a.md"), "utf8")).toBe("v2");
   });
 
+  it("前缀边界:ch001 不误匹配 ch0010;回滚取最早一条该章 commit(连带其改写一起退)", () => {
+    const dir = tmpRepo();
+    fs.writeFileSync(path.join(dir, "base.md"), "基线", "utf8");
+    commitAll(dir, "init");
+    fs.writeFileSync(path.join(dir, "a.md"), "v1", "utf8");
+    commitAll(dir, "ch001: 写作");
+    fs.writeFileSync(path.join(dir, "a.md"), "v2", "utf8");
+    commitAll(dir, "ch0010: 写作"); // 更新的、前缀相同的长章号
+    fs.writeFileSync(path.join(dir, "a.md"), "v3", "utf8");
+    commitAll(dir, "ch001-revise: 改写"); // ch001 的改写 commit(更新)
+    resetToBefore(dir, "ch001");
+    // 目标 = 最早那条 ch001 的父(init):a.md 消失,基线仍在
+    expect(fs.existsSync(path.join(dir, "a.md"))).toBe(false);
+    expect(fs.existsSync(path.join(dir, "base.md"))).toBe(true);
+  });
+
   it("前缀不存在 → 中文报错含错误码", () => {
     const dir = tmpRepo();
     fs.writeFileSync(path.join(dir, "a.md"), "v1", "utf8");

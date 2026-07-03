@@ -48,9 +48,17 @@ export function commitAll(dir: string, message: string): string | null {
   return runGit(dir, ["rev-parse", "HEAD"]).trim();
 }
 
-/** 回滚:找到最新一条 message 以 prefix 开头的 commit,硬 reset 到它的父提交。 */
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * 回滚:找到**最早**一条 message 匹配 prefix 的 commit,硬 reset 到它的父提交——
+ * 这样该章的原写作与其后全部改写/编辑一并退掉(级联一致)。
+ * prefix 后必须是 ":"、"-"、空格或结尾,防止 ch001 误命中 ch0010。
+ */
 export function resetToBefore(dir: string, prefix: string): void {
-  const entry = log(dir).find((e) => e.message.startsWith(prefix));
+  const boundary = new RegExp(`^${escapeRe(prefix)}([:\\- ]|$)`);
+  const matches = log(dir).filter((e) => boundary.test(e.message));
+  const entry = matches.at(-1); // log 最新在前 → 末尾即最早
   if (!entry) {
     throw new Error(`找不到以「${prefix}」开头的提交(commit_not_found)`);
   }
@@ -62,4 +70,23 @@ export function resetToBefore(dir: string, prefix: string): void {
     throw new Error(`提交「${entry.message}」没有父提交,无法回退到它之前(no_parent_commit)`);
   }
   runGit(dir, ["reset", "--hard", "-q", parent.stdout.trim()]);
+}
+
+/** 当前 HEAD 的 hash(修复流程 reset 前先记下,失败好恢复)。 */
+export function headOf(dir: string): string {
+  return runGit(dir, ["rev-parse", "HEAD"]).trim();
+}
+
+/** 硬恢复到指定 commit。 */
+export function resetToCommit(dir: string, hash: string): void {
+  runGit(dir, ["reset", "--hard", "-q", hash]);
+}
+
+/**
+ * 把工作区恢复到 HEAD 的干净状态(落盘中途失败时用):
+ * 先清掉五个内容子目录里的未跟踪残骸(不动 .index 与书根的用户散件),再还原已跟踪文件。
+ */
+export function restoreWorktree(dir: string): void {
+  runGit(dir, ["clean", "-fdq", "--", "章节", "摘要", "角色", "世界书", "弧"]);
+  runGit(dir, ["checkout", "-q", "--", "."]);
 }

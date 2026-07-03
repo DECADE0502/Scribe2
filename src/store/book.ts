@@ -4,8 +4,26 @@ import matter from "gray-matter";
 
 const pad3 = (n: number) => String(n).padStart(3, "0");
 
-/** 行内字段里的竖线会破坏「a | b | c」行格式,渲染前替换掉。 */
-const noPipe = (s: string) => s.replace(/\|/g, "/").trim();
+/** 行内字段消毒:竖线破坏「a | b | c」行格式,换行会把单行条目撕成两行——都换成安全字符。 */
+const noPipe = (s: string) =>
+  s.replace(/\|/g, "/").replace(/\s*\r?\n\s*/g, " ").trim();
+
+/**
+ * 实体名(角色名/世界书题)要当文件名用,而它来自 LLM 抽取,完全不可信:
+ * 剔除路径分隔与 Windows 非法字符,拒绝空名与点名——否则会路径穿越或静默写进子目录。
+ */
+export function sanitizeEntityName(name: string): string {
+  const cleaned = name
+    .normalize("NFKC")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[.\s]+|[.\s]+$/g, "");
+  if (!cleaned || /^\.+$/.test(cleaned)) {
+    throw new Error(`实体名「${name}」无法用作文件名(invalid_entity_name)`);
+  }
+  return cleaned;
+}
 
 /** 实体标签归一化:全半角统一 + 去首尾空白 + 压缩内部空白。 */
 export function normalizeLabel(label: string): string {
@@ -114,7 +132,11 @@ function parseSections(body: string): Map<string, string> {
 }
 
 function renderSections(sections: Map<string, string>): string {
-  return [...sections.entries()].map(([title, content]) => `## ${title}\n\n${content}\n`).join("\n");
+  // 节内容里行首的 "## " 会被 parseSections 误切成新节(渐进式丢内容)→ 降级为 "###"
+  const demote = (content: string) => content.replace(/^##(\s)/gm, "###$1");
+  return [...sections.entries()]
+    .map(([title, content]) => `## ${title}\n\n${demote(content)}\n`)
+    .join("\n");
 }
 
 // ---------- BookStore ----------
@@ -157,10 +179,14 @@ export class BookStore {
     return fs.existsSync(full) ? fs.readFileSync(full, "utf8") : fallback;
   }
 
-  /** git 不跟踪空目录:reset/rollback 后子目录可能消失,写前一律补建父目录。 */
+  /** git 不跟踪空目录:reset/rollback 后子目录可能消失,写前一律补建父目录;并拒绝写出书目录之外。 */
   private writeFile(fullPath: string, content: string): void {
-    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-    fs.writeFileSync(fullPath, content, "utf8");
+    const resolved = path.resolve(fullPath);
+    if (!resolved.startsWith(path.resolve(this.dir) + path.sep)) {
+      throw new Error(`拒绝写出书目录之外:${fullPath}(path_escape)`);
+    }
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+    fs.writeFileSync(resolved, content, "utf8");
   }
 
   // ---------- meta ----------
@@ -254,14 +280,15 @@ export class BookStore {
     base?: string;
     state?: string;
   }): void {
-    const file = this.p("角色", `${input.name}.md`);
-    const existing = fs.existsSync(file) ? this.readCharacter(input.name) : undefined;
+    const name = sanitizeEntityName(input.name);
+    const file = this.p("角色", `${name}.md`);
+    const existing = fs.existsSync(file) ? this.readCharacter(name) : undefined;
     // 基底是静态设定:文件已存在时不允许覆盖,只有空基底可补
     const base = existing?.base ? existing.base : (input.base ?? "");
     const state = input.state ?? existing?.state ?? "";
     const role = existing?.role ? existing.role : (input.role ?? "");
     const aliases = [...new Set([...(existing?.aliases ?? []), ...(input.aliases ?? [])])].filter(
-      (a) => a && a !== input.name,
+      (a) => a && a !== name,
     );
     const body = renderSections(
       new Map([
@@ -301,7 +328,7 @@ export class BookStore {
   // ---------- 世界书 ----------
 
   upsertWorldbook(input: Worldbook): void {
-    const file = this.p("世界书", `${input.title}.md`);
+    const file = this.p("世界书", `${sanitizeEntityName(input.title)}.md`);
     this.writeFile(
       file,
       matter.stringify(`\n${input.body.trim()}\n`, { keys: input.keys, constant: input.constant }),
@@ -511,16 +538,23 @@ export class BookStore {
     fs.writeFileSync(this.p("问题.md"), `# 问题\n\n${lines.join("\n")}\n`, "utf8");
   }
 
-  /** 稳定 id = hash(type|章号|note 前 20 字),同一问题重复 add 不翻倍。 */
+  /** 稳定 id = hash(type|章号|note 全文):重复 add 不翻倍;撞上 resolved 旧条 = 问题复发,翻回 open。 */
   addIssues(items: Array<{ type: string; chapterNo: number; note: string }>): Issue[] {
     const issues = this.listAllIssues();
-    const known = new Set(issues.map((i) => i.id));
+    const byId = new Map(issues.map((i) => [i.id, i]));
     const added: Issue[] = [];
     for (const item of items) {
-      const id = stableId(`${item.type}|${item.chapterNo}|${item.note.slice(0, 20)}`);
-      if (known.has(id)) continue;
-      known.add(id);
+      const id = stableId(`${item.type}|${item.chapterNo}|${item.note}`);
+      const existing = byId.get(id);
+      if (existing) {
+        if (existing.status === "resolved") {
+          existing.status = "open";
+          added.push(existing);
+        }
+        continue;
+      }
       const issue: Issue = { id, status: "open", ...item };
+      byId.set(id, issue);
       issues.push(issue);
       added.push(issue);
     }
