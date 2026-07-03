@@ -14,6 +14,7 @@ import { writeChapter, type WriteDeps, type GenerateRole, type StreamRole } from
 import { onboardTurn, readiness } from "./../engine/onboard.js";
 import { chatTurn, type ChatDeps } from "./../engine/chat.js";
 import { runAudit } from "./../engine/audit.js";
+import { reviseSegment } from "./../engine/revise.js";
 import * as readline from "node:readline";
 import type { Usage } from "./../types.js";
 
@@ -292,6 +293,36 @@ program
     for (const line of report.lines) console.log(line);
     if (!report.issues.length) console.log("未发现确凿问题。");
     else console.log(`已写入 问题.md:新增 ${report.added.length} 条(重复问题自动去重)。`);
+  });
+
+program
+  .command("revise")
+  .description("选段改写:--find 原样给出选段,-m 给改写指令")
+  .argument("<书名>", "books/ 下的书目录名")
+  .argument("<章号>", "要改写的章")
+  .requiredOption("--find <选段>", "要重写的正文片段(原样复制)")
+  .option("-m, --message <指令>", "改写指令", "")
+  .option("--occurrence <序号>", "选段重复时的出现序号(0 起)")
+  .action(async (bookName: string, chapterRaw: string, opts: { find: string; message: string; occurrence?: string }) => {
+    const store = resolveBook(bookName);
+    const { from } = parseRange(chapterRaw);
+    const deps = buildDeps(store, loadConfig());
+    const result = await reviseSegment(
+      store,
+      {
+        chapterNo: from,
+        selected: opts.find,
+        instruction: opts.message,
+        ...(opts.occurrence !== undefined ? { occurrenceIndex: Number(opts.occurrence) } : {}),
+      },
+      {
+        rewriter: deps.writer,
+        config: deps.config,
+        ...(deps.onUsage ? { onUsage: deps.onUsage } : {}),
+        onDelta: (d) => process.stdout.write(d),
+      },
+    );
+    console.log(`\n✔ 第 ${from} 章选段已改写(新段 ${result.newSegment.length} 字),commit ch${String(from).padStart(3, "0")}-revise`);
   });
 
 program
