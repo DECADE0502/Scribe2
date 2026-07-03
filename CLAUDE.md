@@ -3,13 +3,15 @@
 长篇小说写作引擎,全新重写(前身在 `D:\desktop\Scribe-gh`,其教训已吸收进设计,勿回去改它)。
 核心命题:连续写几百章不失忆。三条铁律:**文件即记忆 / 检索即注入 / 提示词一等公民**。
 
-## 当前状态(2026-07-03 交接)
+## 当前状态(2026-07-03 全部实现完毕)
 
 - ✅ 设计定稿:`docs/SPEC.md`(必读——五角色管线/混合检索/深层提示词兼容/git即版本)
-- ✅ 实现计划:`docs/PLAN.md`(23 任务 6 阶段,任务级 TDD + 阶段级 live 剧本)
-- ✅ 内置提示词 9 份:`prompts/`(已按设计写好,实现时不要随手改动其契约)
-- ✅ 工程骨架 + 依赖已装(pnpm);`docs/reference/` 有旧仓验证过的可移植代码
-- ❌ 代码未开始 —— **从 PLAN 阶段1 Task 1 开工**
+- ✅ 实现计划:`docs/PLAN.md` 全 23 任务 6 阶段**已完成**;Gate A-E 已过用户验收
+- ✅ unit 138 绿(`pnpm test`)+ live 5 绿(`pnpm test:live`,真 DeepSeek 全流程剧本)
+- ✅ CLI 全命令可用(`pnpm dev --help`);server+web:`pnpm serve` → http://localhost:8787
+- ⏳ Gate F(用户浏览器最终验收)待确认
+- 注意与 PLAN 的三处已汇报偏差:组装器层序以 write-chapter.md 槽位为准;
+  护栏按章号 %5 触发;chat/onboard 的 CLI 输入循环区分管道与 TTY。
 
 ## 怎么干
 
