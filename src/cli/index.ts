@@ -17,6 +17,7 @@ import { runAudit } from "./../engine/audit.js";
 import { reviseSegment } from "./../engine/revise.js";
 import { writeMany, fixLatest } from "./../engine/many.js";
 import { importSillyTavern } from "./../import/sillytavern.js";
+import { exportBook, exportChapter, rollbackBook, type ExportFormat } from "./../engine/export.js";
 import * as readline from "node:readline";
 import type { Usage } from "./../types.js";
 
@@ -380,7 +381,9 @@ program
     const chapters = store.listChapters();
     const usage = summarizeUsage(store.dir);
     const index = loadIndex(store);
+    const ready = readiness(store);
     console.log(`书名:${meta.name}`);
+    console.log(`就绪度:${ready.ready ? "✓ 可写作" : `未就绪,还缺 ${ready.missing.join("、")}`}`);
     if (meta.genre) console.log(`题材:${meta.genre}`);
     if (meta.pov) console.log(`视角:${meta.pov}`);
     console.log(`章节:${chapters.length} 章${chapters.length ? `(最新 第${chapters.at(-1)}章)` : ""}`);
@@ -420,6 +423,43 @@ program
       `导入完成(${report.type === "character" ? "角色卡" : "世界书"}):角色 ${report.imported.characters} 个,世界书 ${report.imported.worldbooks} 条`,
     );
     for (const w of report.warnings) console.log(`  提醒:${w}`);
+  });
+
+program
+  .command("export")
+  .description("导出全书或单章(默认 md,--txt 纯文本)")
+  .argument("<书名>", "books/ 下的书目录名")
+  .option("--txt", "导出为纯文本", false)
+  .option("--chapter <章号>", "只导出这一章")
+  .option("-o, --out <文件>", "输出文件路径(默认 <书名>.md/.txt)")
+  .action((bookName: string, opts: { txt: boolean; chapter?: string; out?: string }) => {
+    const store = resolveBook(bookName);
+    const format: ExportFormat = opts.txt ? "txt" : "md";
+    const content = opts.chapter
+      ? exportChapter(store, parseRange(opts.chapter).from, format)
+      : exportBook(store, format);
+    const outFile = path.resolve(opts.out ?? `${bookName}${opts.chapter ? `-第${opts.chapter}章` : ""}.${format}`);
+    fs.writeFileSync(outFile, content, "utf8");
+    console.log(`已导出 ${content.length} 字 → ${outFile}`);
+  });
+
+program
+  .command("rollback")
+  .description("回滚:reset 到指定章的 commit 之前(正文与记忆级联回退,自动重建索引)")
+  .argument("<书名>", "books/ 下的书目录名")
+  .argument("<章号>", "回滚点:该章及其后全部撤销")
+  .action(async (bookName: string, chapterRaw: string) => {
+    const store = resolveBook(bookName);
+    const { from } = parseRange(chapterRaw);
+    let embedder = null;
+    try {
+      embedder = embeddingModelFor(loadConfig());
+    } catch {
+      /* 无配置则无向量重建 */
+    }
+    await rollbackBook(store, from, embedder);
+    const chapters = store.listChapters();
+    console.log(`已回滚到第 ${from} 章之前;当前章数 ${chapters.length}${chapters.length ? `(最新 第${chapters.at(-1)}章)` : ""},索引已重建`);
   });
 
 program
