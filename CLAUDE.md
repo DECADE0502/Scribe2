@@ -10,6 +10,7 @@
 - ✅ unit 138 绿(`pnpm test`)+ live 5 绿(`pnpm test:live`,真 DeepSeek 全流程剧本)
 - ✅ CLI 全命令可用(`pnpm dev --help`);server+web:`pnpm serve` → http://localhost:8787
 - ⏳ Gate F(用户浏览器最终验收)待确认
+- ✅ 全仓评审(docs/REVIEW-2026-07-03.md):37 项确认问题已修 36 项(含 2 critical),unit 180 绿 + live 复验绿
 - 注意与 PLAN 的三处已汇报偏差:组装器层序以 write-chapter.md 槽位为准;
   护栏按章号 %5 触发;chat/onboard 的 CLI 输入循环区分管道与 TTY。
 

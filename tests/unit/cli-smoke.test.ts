@@ -17,15 +17,28 @@ function runCli(args: string[], cwd = repoRoot) {
 }
 
 describe("CLI 冒烟", () => {
-  it("--help 列出全部命令,输出全中文(无英文帮助残留)", () => {
+  it("--help 列出全部 12 个命令,输出全中文(无英文帮助残留)", () => {
     const res = runCli(["--help"]);
     const out = res.stdout;
-    for (const cmd of ["write", "status", "reindex"]) expect(out).toContain(cmd);
+    const ALL_COMMANDS = [
+      "new", "onboard", "chat", "write", "fix", "revise",
+      "audit", "status", "reindex", "import", "export", "rollback",
+    ];
+    for (const cmd of ALL_COMMANDS) expect(out, cmd).toContain(cmd);
     expect(out).toContain("用法");
     expect(out).toMatch(/[一-龥]/);
     expect(out).not.toContain("Usage:");
     expect(out).not.toContain("Options:");
     expect(out).not.toContain("Commands:");
+    expect(res.status).toBe(0);
+  });
+
+  it("子命令 help(write --help)同样全中文", () => {
+    const res = runCli(["write", "--help"]);
+    expect(res.stdout).toContain("用法");
+    expect(res.stdout).toMatch(/[一-龥]/);
+    expect(res.stdout).not.toContain("Usage:");
+    expect(res.stdout).not.toContain("Options:");
     expect(res.status).toBe(0);
   });
 
