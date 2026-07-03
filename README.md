@@ -9,6 +9,13 @@
 
 设计规格:`docs/SPEC.md`。
 
+## 快速开始(Windows 一键)
+
+双击 **`启动.bat`**:自动装依赖/构建界面/生成默认配置,起服务并打开浏览器
+(http://localhost:8787)。该窗口全程滚动详细日志(同步写入 `logs/`),
+关闭窗口或 Ctrl+C 即停止;残留进程用 **`停止.bat`** 清理。
+首次使用前在根目录建 `secrets.env`,写入 `DEEPSEEK_API_KEY=你的密钥`。
+
 ```
 scribe new <书名>          # 对话建书
 scribe write <书> 5        # 写第 5 章(流式)
