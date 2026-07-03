@@ -96,7 +96,6 @@ export async function writeMany(
   deps: ManyDeps,
 ): Promise<ManyResult> {
   const completed: number[] = [];
-  let writtenThisRun = 0;
   for (let no = from; no <= to; no++) {
     if (deps.runBudgetUsd !== undefined && deps.costProbe) {
       const spent = deps.costProbe();
@@ -120,8 +119,8 @@ export async function writeMany(
       };
     }
     completed.push(no);
-    writtenThisRun += 1;
-    if (writtenThisRun % GUARD_EVERY === 0) {
+    // 章号 %5 触发(而非本次运行计数):断点续写 3..6 也能在第 5 章按时护栏
+    if (no % GUARD_EVERY === 0) {
       const stop = await guardAudit(store, deps, no);
       if (stop) return { completed, stoppedAt: no + 1, reason: stop };
     }

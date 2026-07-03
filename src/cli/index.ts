@@ -149,6 +149,30 @@ program
     },
   });
 
+/**
+ * 输入行来源:TTY 走 readline 交互(带提示符);管道/重定向则整读 stdin 逐行产出——
+ * readline 的 prompt() 在管道 EOF 后会抛 "readline was closed",且慢轮次里易丢后续行。
+ */
+async function* inputLines(promptLabel: string): AsyncGenerator<string> {
+  if (!process.stdin.isTTY) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+    for (const line of Buffer.concat(chunks).toString("utf8").split(/\r?\n/)) yield line;
+    return;
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  rl.setPrompt(promptLabel);
+  rl.prompt();
+  try {
+    for await (const line of rl) {
+      yield line;
+      rl.prompt();
+    }
+  } finally {
+    rl.close();
+  }
+}
+
 async function onboardLoop(store: BookStore): Promise<void> {
   const first = readiness(store);
   console.log(
@@ -157,10 +181,7 @@ async function onboardLoop(store: BookStore): Promise<void> {
       : `建书对话开始,还缺:${first.missing.join("、")}。`,
   );
   console.log("一行一轮;输入「退出」或 Ctrl+C 结束。");
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  rl.setPrompt("你:");
-  rl.prompt();
-  for await (const line of rl) {
+  for await (const line of inputLines("你:")) {
     const message = line.trim();
     if (!message || message === "退出" || message === "exit") break;
     const deps = buildDeps(store, loadConfig());
@@ -176,9 +197,7 @@ async function onboardLoop(store: BookStore): Promise<void> {
     console.log(
       `\n${result.readiness.ready ? "✓ 底子齐了,可以开写:scribe write <书> 1" : `还缺:${result.readiness.missing.join("、")}`}`,
     );
-    rl.prompt();
   }
-  rl.close();
   console.log("建书对话结束。");
 }
 
@@ -230,18 +249,13 @@ program
       return;
     }
     console.log("进入对话(输入「退出」或 Ctrl+C 结束):");
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.setPrompt("你:");
-    rl.prompt();
-    for await (const line of rl) {
+    for await (const line of inputLines("你:")) {
       const message = line.trim();
       if (!message || message === "退出" || message === "exit") break;
       process.stdout.write("助手:");
       await chatTurn(store, message, chatDeps);
       console.log("");
-      rl.prompt();
     }
-    rl.close();
   });
 
 program
