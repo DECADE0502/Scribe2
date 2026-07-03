@@ -16,6 +16,7 @@ import { chatTurn, type ChatDeps } from "./../engine/chat.js";
 import { runAudit } from "./../engine/audit.js";
 import { reviseSegment } from "./../engine/revise.js";
 import { writeMany, fixLatest } from "./../engine/many.js";
+import { importSillyTavern } from "./../import/sillytavern.js";
 import * as readline from "node:readline";
 import type { Usage } from "./../types.js";
 
@@ -389,6 +390,36 @@ program
     for (const [role, s] of Object.entries(usage.byRole)) {
       console.log(`  ${role}:${s.calls} 次调用,$${s.costUsd.toFixed(4)},缓存命中 ${s.cachedTokens} tok`);
     }
+  });
+
+program
+  .command("import")
+  .description("导入 SillyTavern 角色卡/世界书 JSON")
+  .argument("<书名>", "books/ 下的书目录名")
+  .argument("<文件>", "SillyTavern 导出的 .json 文件路径")
+  .action(async (bookName: string, file: string) => {
+    const store = resolveBook(bookName);
+    if (!fs.existsSync(file)) fail(`找不到文件 ${file}(file_not_found)`);
+    let json: unknown;
+    try {
+      json = JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch {
+      fail(`${file} 不是合法 JSON(invalid_json)`);
+    }
+    let embedder = null;
+    try {
+      embedder = embeddingModelFor(loadConfig());
+    } catch {
+      /* 无配置也能导入,只是不做向量 */
+    }
+    const report = await importSillyTavern(store, embedder, json);
+    if (fs.existsSync(path.join(store.dir, ".git"))) {
+      commitAll(store.dir, `import: ${path.basename(file)}`);
+    }
+    console.log(
+      `导入完成(${report.type === "character" ? "角色卡" : "世界书"}):角色 ${report.imported.characters} 个,世界书 ${report.imported.worldbooks} 条`,
+    );
+    for (const w of report.warnings) console.log(`  提醒:${w}`);
   });
 
 program

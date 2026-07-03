@@ -1,0 +1,30 @@
+{
+  "entries": {
+    "0": {
+      "uid": 0,
+      "comment": "青璃剑冢",
+      "key": ["剑冢", "青璃"],
+      "keysecondary": ["守墓人"],
+      "content": "北境雪山深处的剑修葬地,埋着三千柄有主之剑。夜里剑鸣如潮。",
+      "constant": false,
+      "disable": false,
+      "order": 100
+    },
+    "1": {
+      "uid": 1,
+      "comment": "北境常识",
+      "key": [],
+      "content": "北境常年落雪,修士以剑气御寒;凡人聚居在温泉谷地。",
+      "constant": true,
+      "disable": false
+    },
+    "2": {
+      "uid": 2,
+      "comment": "停用条目",
+      "key": ["废弃"],
+      "content": "这条已被作者停用,不应导入。",
+      "constant": false,
+      "disable": true
+    }
+  }
+}
