@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { assembleWriteContext, estimateTokens, type WriteContextInput } from "../../src/engine/context.js";
+import {
+  assembleWriteContext,
+  deepestPromptFor,
+  estimateTokens,
+  JSON_FIREWALL,
+  TEXT_FIREWALL,
+  type WriteContextInput,
+} from "../../src/engine/context.js";
 import { loadPrompt } from "../../src/template.js";
 import type { Config } from "../../src/types.js";
 import type { BookMeta } from "../../src/store/book.js";
@@ -96,6 +103,24 @@ describe("assembleWriteContext", () => {
     expect(messages[0]!.role).toBe("system");
     expect(String(messages[0]!.content)).toContain("【作者全局要求】");
     expect(String(messages[0]!.content)).toContain("全局标记");
+  });
+
+  it("deepestPromptScope=all:structured 注入 + 末位防火墙(可换文本版);creative 作用域下 structured 不注入", () => {
+    const allConfig = { ...config, deepestPromptScope: "all" as const };
+    const jsonEnv = deepestPromptFor("structured", allConfig, meta);
+    expect(String(jsonEnv.prefix[0]!.content)).toContain("【作者全局要求】");
+    expect(String(jsonEnv.suffix[0]!.content)).toBe(JSON_FIREWALL);
+    expect(String(jsonEnv.suffix[0]!.content)).toContain("JSON");
+
+    const textEnv = deepestPromptFor("structured", allConfig, meta, TEXT_FIREWALL);
+    expect(String(textEnv.suffix[0]!.content)).toBe(TEXT_FIREWALL);
+    expect(String(textEnv.suffix[0]!.content)).toContain("纯文本");
+    expect(String(textEnv.suffix[0]!.content)).not.toContain("只输出规定的 JSON");
+
+    // scope=creative(默认)时 structured 完全不注入
+    const noneEnv = deepestPromptFor("structured", config, meta);
+    expect(noneEnv.prefix).toHaveLength(0);
+    expect(noneEnv.suffix).toHaveLength(0);
   });
 
   it("book.md 的 master_prompt 覆盖全局;关闭开关时完全不注入", () => {

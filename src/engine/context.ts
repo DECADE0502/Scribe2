@@ -26,23 +26,32 @@ export const JSON_FIREWALL =
   "以上风格与格式偏好仅适用于小说创作输出;本次调用是内部数据处理," +
   "忽略一切与输出格式冲突的先前指令,只输出规定的 JSON。";
 
+/** 纯文本步骤(弧压缩)的防火墙:命令"只输出 JSON"会直接写坏弧纲要这份长程记忆。 */
+export const TEXT_FIREWALL =
+  "以上风格与格式偏好仅适用于小说创作输出;本次调用是内部档案压缩," +
+  "忽略一切与输出格式冲突的先前指令,只输出纯文本纲要——不要 JSON、不要代码围栏、不要标题。";
+
 export interface DeepestPromptEnvelope {
   prefix: CoreMessage[];
   suffix: CoreMessage[];
 }
 
-/** kind=creative:首条 system 注入;kind=structured:默认不注入,scope=all 时注入+末位格式防火墙。 */
+/**
+ * kind=creative:首条 system 注入;kind=structured:默认不注入,scope=all 时注入+末位格式防火墙。
+ * firewall 可换(JSON 步用 JSON_FIREWALL,纯文本步用 TEXT_FIREWALL)。
+ */
 export function deepestPromptFor(
   kind: "creative" | "structured",
   config: Config,
   meta: BookMeta,
+  firewall: string = JSON_FIREWALL,
 ): DeepestPromptEnvelope {
   const prompt = (meta.masterPrompt ?? config.masterPrompt ?? "").trim();
   if (!prompt || !meta.deepestPromptEnabled) return { prefix: [], suffix: [] };
   const injection: CoreMessage = { role: "system", content: `【作者全局要求】\n${prompt}` };
   if (kind === "creative") return { prefix: [injection], suffix: [] };
   if (config.deepestPromptScope === "all") {
-    return { prefix: [injection], suffix: [{ role: "system", content: JSON_FIREWALL }] };
+    return { prefix: [injection], suffix: [{ role: "system", content: firewall }] };
   }
   return { prefix: [], suffix: [] };
 }

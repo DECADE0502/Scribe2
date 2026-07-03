@@ -12,6 +12,7 @@ import {
   assembleWriteContext,
   chapterPlanSchema,
   deepestPromptFor,
+  TEXT_FIREWALL,
   type ChapterPlan,
 } from "./context.js";
 import { sanitizeProse } from "./sanitize.js";
@@ -101,7 +102,46 @@ function planAsText(plan: ChapterPlan): string {
     `目标:${plan.goal}`,
     ...plan.scenes.map((s, i) => `场景${i + 1}:${s}`),
     `出场角色:${plan.charactersOnStage.join("、")}`,
+    ...(plan.foreshadowToTouch.length ? [`要触碰的伏笔:${plan.foreshadowToTouch.join("、")}`] : []),
   ].join("\n");
+}
+
+/**
+ * 从整份大纲切出当前章所属的段落(SPEC §3.2 ① 入参是"大纲对应弧"):
+ * 认「N-N 章」区间标题行,取覆盖本章的全部层级标题 + 最窄区间之后的正文,
+ * 直到下一条不覆盖本章的区间行;认不出区间格式时回退整份大纲。
+ */
+export function outlineSliceFor(outline: string, chapterNo: number): string {
+  const lines = outline.split(/\r?\n/);
+  const rangeRe = /(\d+)\s*[-–~—]\s*(\d+)\s*章?/; // 「1-10 章」或「弧1(1-5)」两种写法都认
+  const covers = (line: string): boolean | null => {
+    const m = rangeRe.exec(line);
+    if (!m) return null;
+    return chapterNo >= Number(m[1]) && chapterNo <= Number(m[2]);
+  };
+  let anchor = -1;
+  let anchorSpan = Number.POSITIVE_INFINITY;
+  const headers: string[] = [];
+  lines.forEach((line, i) => {
+    const c = covers(line);
+    if (c !== true) return;
+    headers.push(line);
+    const m = rangeRe.exec(line)!;
+    const span = Number(m[2]) - Number(m[1]);
+    // <=:同宽区间取更靠后的(更深层级)做锚,免得它再次落进 body 造成重复
+    if (span <= anchorSpan) {
+      anchorSpan = span;
+      anchor = i;
+    }
+  });
+  if (anchor === -1) return outline;
+  const body: string[] = [];
+  for (let i = anchor + 1; i < lines.length; i++) {
+    if (covers(lines[i]!) === false) break;
+    body.push(lines[i]!);
+  }
+  const slice = [...headers, ...body].join("\n").trim();
+  return slice || outline;
 }
 
 export interface WriteResult {
@@ -138,7 +178,7 @@ export async function writeChapter(
   const activeForeshadows = store.listForeshadows().filter((f) => f.status === "active");
   const planPrompt = renderTemplate(loadPrompt("plan-chapter", store.dir), {
     章号: chapterNo,
-    弧规划: store.readDoc("大纲").trim() || "(无大纲,自由发挥)",
+    弧规划: outlineSliceFor(store.readDoc("大纲").trim(), chapterNo) || "(无大纲,自由发挥)",
     上章摘要: prevSummary,
     上章结尾: prevTail,
     用户指令: instruction,
@@ -252,6 +292,10 @@ export async function writeChapter(
     章号: chapterNo,
     记录规则: store.readDoc("记录规则").trim() || "(本书未定义动态记录)",
     角色名录: roster,
+    // 回收 label 必须逐字对上档案,否则 applyForeshadow 静默翻转失败、伏笔永久滞留 active
+    现有伏笔: activeForeshadows.length
+      ? activeForeshadows.map((f) => `- ${f.label}`).join("\n")
+      : "(无)",
     本章规划: planAsText(plan),
     正文: text,
   });
@@ -341,11 +385,13 @@ async function compressArc(store: BookStore, chapterNo: number, deps: WriteDeps)
     上一份弧纲要: arcNo > 1 && store.listArcs().includes(arcNo - 1) ? store.readArc(arcNo - 1) : "",
   });
   const meta = store.readMeta();
-  const envelope = deepestPromptFor("structured", deps.config, meta);
+  // 弧压缩产出是纯文本长程记忆:scope=all 时不能用 JSON 防火墙(会诱导模型包成 JSON 写坏弧纲要)
+  const envelope = deepestPromptFor("structured", deps.config, meta, TEXT_FIREWALL);
   const compressor = deps.compressor ?? deps.extractor;
   const { text } = await compressor({
     messages: [...envelope.prefix, { role: "user", content: prompt }, ...envelope.suffix],
     onUsage: (u) => deps.onUsage?.("extractor", u),
   });
-  if (text.trim()) store.writeArc(arcNo, text.trim());
+  const clean = sanitizeProse(text); // 剥围栏/元话语,坏格式不落进长程记忆
+  if (clean.trim()) store.writeArc(arcNo, clean.trim());
 }
