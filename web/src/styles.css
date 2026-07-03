@@ -1,0 +1,123 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: #f5f4f0;
+  color: #2b2b2b;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  background: #263238;
+  color: #eceff1;
+}
+.topbar h1 { font-size: 16px; margin: 0; }
+.topbar button {
+  background: transparent;
+  border: 1px solid #546e7a;
+  color: #eceff1;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.topbar button:hover { background: #37474f; }
+.topbar .active { background: #37474f; border-color: #90a4ae; }
+
+.library { padding: 24px; display: flex; flex-wrap: wrap; gap: 16px; }
+.book-card {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 16px 20px;
+  width: 220px;
+  cursor: pointer;
+}
+.book-card:hover { border-color: #607d8b; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+.book-card h3 { margin: 0 0 8px; }
+.book-card .meta { font-size: 12px; color: #777; }
+
+.workspace {
+  display: grid;
+  grid-template-columns: 220px 1fr 360px;
+  height: calc(100vh - 44px);
+}
+.sidebar {
+  border-right: 1px solid #ddd;
+  overflow-y: auto;
+  background: #fafaf8;
+  padding: 8px;
+  font-size: 13px;
+}
+.sidebar h4 { margin: 10px 4px 4px; font-size: 12px; color: #888; }
+.sidebar .item {
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar .item:hover { background: #eee; }
+.sidebar .item.selected { background: #e3ecf2; color: #1a3c50; }
+
+.editor-pane { display: flex; flex-direction: column; overflow: hidden; }
+.editor-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #ddd;
+  background: #fff;
+}
+.editor-head .name { font-weight: 600; }
+.editor-head .dirty { color: #c62828; font-size: 12px; }
+.editor-head button {
+  margin-left: auto;
+  background: #2e7d32;
+  color: #fff;
+  border: none;
+  padding: 5px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.editor-head button:disabled { background: #bbb; cursor: default; }
+.editor-body { flex: 1; overflow: auto; background: #fff; }
+
+.run-pane {
+  border-left: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+  background: #fafaf8;
+}
+.run-form { padding: 12px; border-bottom: 1px solid #ddd; display: flex; flex-direction: column; gap: 8px; }
+.run-form select, .run-form input, .run-form textarea {
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font: inherit;
+}
+.run-form button {
+  background: #1565c0;
+  color: #fff;
+  border: none;
+  padding: 7px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.run-form button:disabled { background: #bbb; }
+.run-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.run-log .sys { color: #1565c0; }
+.run-log .err { color: #c62828; }
+
+.settings { padding: 24px; max-width: 640px; line-height: 1.8; }
+.settings code { background: #eee; padding: 1px 6px; border-radius: 3px; }
+.status-box { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; margin-top: 12px; font-size: 13px; }
