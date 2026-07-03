@@ -32,6 +32,24 @@ describe("streamCall", () => {
     expect(usages).toHaveLength(1);
   });
 
+  it("finish 带 providerMetadata → cachedTokens 读出;usage 为 NaN → 兜成 0", async () => {
+    const usages: Array<{ promptTokens: number; cachedTokens: number }> = [];
+    for await (const _ of streamCall({
+      model: stubModel([
+        { type: "text-delta", textDelta: "字" },
+        {
+          type: "finish", finishReason: "stop",
+          usage: { promptTokens: Number.NaN, completionTokens: 2 },
+          providerMetadata: { deepseek: { cachedPromptTokens: 4, reasoningTokens: 0 } },
+        },
+      ]),
+      messages: [{ role: "user", content: "hi" }],
+      onUsage: (u) => usages.push(u),
+    })) { /* drain */ }
+    expect(usages[0]!.cachedTokens).toBe(4);
+    expect(usages[0]!.promptTokens).toBe(0); // NaN 不得穿透进账本
+  });
+
   it("流内 error part → 抛异常(绝不静默吞掉)", async () => {
     await expect(async () => {
       for await (const _ of streamCall({

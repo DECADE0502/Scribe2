@@ -20,10 +20,12 @@ function toUsage(
   usage: { promptTokens?: number; completionTokens?: number },
   providerMetadata: unknown,
 ): Usage {
+  // ?? 挡不住 NaN(非 DeepSeek provider 流式无 usage 时 SDK 会给 NaN),账本必须拿到有限数
+  const finite = (v: number | undefined) => (Number.isFinite(v) ? (v as number) : 0);
   return {
-    promptTokens: usage.promptTokens ?? 0,
-    completionTokens: usage.completionTokens ?? 0,
-    cachedTokens: readDeepSeekUsage(providerMetadata).cachedPromptTokens,
+    promptTokens: finite(usage.promptTokens),
+    completionTokens: finite(usage.completionTokens),
+    cachedTokens: finite(readDeepSeekUsage(providerMetadata).cachedPromptTokens),
   };
 }
 
@@ -42,6 +44,7 @@ export async function* streamCall(input: CallInput): AsyncGenerator<StreamEvent>
         model: input.model,
         messages: input.messages,
         abortSignal: input.abortSignal,
+        maxRetries: 0, // 重试策略由本层 retry.ts 独家负责,SDK 内层默认重试(2 次)必须关掉
       });
       for await (const part of result.fullStream) {
         if (part.type === "text-delta") {
@@ -70,6 +73,7 @@ export async function generateCall(input: CallInput): Promise<{ text: string; us
       model: input.model,
       messages: input.messages,
       abortSignal: input.abortSignal,
+      maxRetries: 0, // 同 streamCall:关 SDK 内层重试,策略单一来源
     }),
   );
   const usage = toUsage(result.usage, result.providerMetadata);

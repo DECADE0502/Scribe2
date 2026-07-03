@@ -33,6 +33,8 @@ export function modelFor(loaded: LoadedConfig, role: Exclude<Role, "embedding">)
       headers: () => ({ Authorization: `Bearer ${apiKey}` }),
       metadataExtractor: deepseekMetadataExtractor,
       defaultObjectGenerationMode: "json",
+      // 严格 OpenAI 兼容的 provider 流式默认不带 usage(SDK 会给 NaN),显式要求带上
+      includeUsage: true,
     },
   );
 }

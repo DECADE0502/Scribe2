@@ -11,17 +11,34 @@ const POLICY: Record<ErrorClass, { maxRetries: number; backoff: (n: number) => n
 
 export function classifyLlmError(e: unknown): ErrorClass {
   const err = e as
-    | { statusCode?: number; status?: number; message?: string; name?: string }
+    | {
+        statusCode?: number;
+        status?: number;
+        message?: string;
+        name?: string;
+        errors?: unknown[];
+        lastError?: unknown;
+      }
     | undefined;
+  // ai SDK 的 RetryError 是包装层,按最后一次真实错误分类
+  if (err?.name === "AI_RetryError" || err?.name === "RetryError") {
+    const inner = err.errors?.at(-1) ?? err.lastError;
+    if (inner) return classifyLlmError(inner);
+  }
   const status = err?.statusCode ?? err?.status;
   const msg = String(err?.message ?? "").toLowerCase();
   if (err?.name === "AbortError") return "unknown"; // 用户主动取消,不重试
+  // context 溢出是确定性失败,必须先于 rate_limit 判定(消息可能同时含 429 字样)
   if (
-    status === 429 ||
-    msg.includes("429") ||
-    msg.includes("rate limit") ||
-    msg.includes("too many requests")
+    msg.includes("context length") ||
+    msg.includes("maximum context") ||
+    msg.includes("context_length_exceeded") ||
+    msg.includes("too many tokens")
   ) {
+    return "context_overflow";
+  }
+  // 429 只信 statusCode 或明确措辞;裸 "429" 子串会误伤(如 "requested 14290 tokens")
+  if (status === 429 || msg.includes("rate limit") || msg.includes("too many requests")) {
     return "rate_limit";
   }
   if (
@@ -32,14 +49,6 @@ export function classifyLlmError(e: unknown): ErrorClass {
     msg.includes("invalid key")
   ) {
     return "auth";
-  }
-  if (
-    msg.includes("context length") ||
-    msg.includes("maximum context") ||
-    msg.includes("context_length_exceeded") ||
-    msg.includes("too many tokens")
-  ) {
-    return "context_overflow";
   }
   if (
     err?.name === "TimeoutError" ||
