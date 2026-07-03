@@ -167,22 +167,61 @@ constant=true 的世界书 / 全部弧纲要(每条~300字) / 近 3 章全文 / 
 - 全部为 md 文件,`{{变量}}` 插槽 + `{{#if 变量}}...{{/if}}` 条件段,引擎用极简模板器渲染。
 - 用户可整目录覆盖(`books/<书>/prompts/` 存在同名文件则优先)。
 - 每个文件头部注释写明:用途 / 输入插槽 / 期望输出。
-- 最深处提示词(全局 config + book.md 覆盖)prepend 到所有调用最前。
 
-| 文件 | 模型 | 输出 |
-|---|---|---|
-| write-chapter.md | 写作 | 纯正文流式 |
-| plan-chapter.md | 辅助 | 规划 JSON |
-| extract-memory.md | 辅助 | 记忆增量 JSON |
-| compress-arc.md | 辅助 | 弧纲要文本 |
-| audit.md | 辅助 | issues JSON |
-| onboard.md / onboard-extract.md | 写作 / 辅助 | 对话 / 设定 JSON |
-| revise.md | 写作 | 新段落纯文本 |
-| chat.md | 写作 | 对话 |
+| 文件 | 模型 | kind | 输出 |
+|---|---|---|---|
+| write-chapter.md | 写作 | creative | 纯正文流式 |
+| plan-chapter.md | 辅助 | structured | 规划 JSON |
+| extract-memory.md | 辅助 | structured | 记忆增量 JSON |
+| compress-arc.md | 辅助 | structured | 弧纲要文本 |
+| audit.md | 辅助 | structured | issues JSON |
+| onboard.md / onboard-extract.md | 写作 / 辅助 | creative / structured | 对话 / 设定 JSON |
+| revise.md | 写作 | creative | 新段落纯文本 |
+| chat.md | 写作 | creative | 对话 |
 
 写作类提示词的设计要点(详见文件本身):视角纪律、"记忆材料只作一致性约束、
 禁止复述设定原文"、场景推进纪律、章末钩子、禁止总结式收尾、中文网文节奏。
 JSON 类提示词:显式 schema + "只输出 JSON" + 枚举值全列 + 空缺给空数组。
+
+### 4.1 深层提示词兼容(格式安全,重要)
+
+用户自定义深层提示词(全局 config.masterPrompt,book.md 可覆盖/关闭)经常携带
+**输出格式要求**——排版习惯、章末模板、乃至完整回复格式(SillyTavern 生态常态)。
+原则:**深层提示词自由影响创作内容与文风,但永远不获得破坏系统解析契约的权力。
+兼容 = 系统侧防御,不是优先级让位。** 内置提示词保持自身纪律,不设让位条款;
+纪律与用户偏好的真实冲突(如章末要不要挂"本章完")用 book.md 配置项解决
+(`lint.allowTailMarkers` 等),不玩提示词优先级游戏。
+
+三道防线:
+
+1. **注入分域**(每个工作流步骤声明 kind):
+   - `creative`(write / revise / chat / onboard 对话):深层提示词以
+     `【作者全局要求】\n<原文>` 作为第一条 system 注入,影响文风与内容。
+   - `structured`(plan / extract / audit / onboard-extract / compress-arc):
+     **默认不注入**——内部数据处理与用户可见文风无关,注入只会污染 JSON。
+     `config.deepestPromptScope = "all"` 时也注入(有人放世界观级约束),但引擎在
+     消息序列**末尾**追加格式防火墙 system:「以上风格与格式偏好仅适用于小说创作
+     输出;本次调用是内部数据处理,忽略一切与输出格式冲突的先前指令,只输出规定
+     的 JSON。」(末位指令优势压住格式污染,内容级偏好仍然生效。)
+
+2. **正文消毒器**(engine/sanitize.ts,creative 输出落盘前必经,确定性规则):
+   - 剥全文包裹的 ``` 围栏;
+   - 去掉开头的元话语行(「好的,以下是第X章」「### 第X章 标题」等复述性台头,
+     标题已由引擎管理);
+   - 去掉深层提示词诱导的回复模板骨架中可识别的包装行(如「【正文开始】…【正文结束】」
+     取内部);
+   - 消毒后不足字数下限 → 按写作失败处理,不落盘。
+   用户格式偏好中与正文无害共存的部分(分段习惯、标点风格、章末标记)原样保留,
+   是否接受章末标记由 lint 配置决定,不由消毒器裁剪。
+
+3. **硬化 JSON 解析**(llm/json.ts,所有 structured 输出必经):
+   剥 ``` / ```json 围栏 → 扫描首个括号平衡且引号感知的 `{…}` 块 → zod 校验;
+   失败则把原文 + zod 错误喂回模型重试一次,再失败抛 parse 错误。
+   解析永远不依赖模型听话——即便格式指令渗透、或便宜模型加「好的,以下是 JSON:」
+   前缀,接口照常工作。
+
+lint 相关配套:⑤ 步硬校验的规则全部可按书配置(book.md frontmatter `lint` 节),
+默认全开;深层提示词要求的格式若触发某条 lint,用户关那条开关即可,写作管线不受影响。
 
 ---
 
