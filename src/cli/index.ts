@@ -15,6 +15,7 @@ import { onboardTurn, readiness } from "./../engine/onboard.js";
 import { chatTurn, type ChatDeps } from "./../engine/chat.js";
 import { runAudit } from "./../engine/audit.js";
 import { reviseSegment } from "./../engine/revise.js";
+import { writeMany, fixLatest } from "./../engine/many.js";
 import * as readline from "node:readline";
 import type { Usage } from "./../types.js";
 
@@ -263,15 +264,44 @@ program
       await rebuildIndex(store, embeddingModelFor(loaded));
     }
     const deps = buildDeps(store, loaded);
-    for (let no = from; no <= to; no++) {
-      console.log(`\n—— 第 ${no} 章 ——`);
-      const result = await writeChapter(store, no, opts.message, deps);
+    if (from === to) {
+      console.log(`\n—— 第 ${from} 章 ——`);
+      const result = await writeChapter(store, from, opts.message, deps);
       console.log(
-        `\n✔ 第 ${no} 章完成:${result.text.length} 字` +
+        `\n✔ 第 ${from} 章完成:${result.text.length} 字` +
           (result.rewritten ? "(经一次带因重写)" : "") +
           (result.dropped.length ? `,预算裁剪:${result.dropped.join("、")}` : ""),
       );
+      return;
     }
+    if (opts.message) console.log("提示:连写模式按大纲驱动,-m 指令已忽略。");
+    const startCost = summarizeUsage(store.dir).totalCostUsd;
+    const result = await writeMany(store, from, to, {
+      ...deps,
+      runBudgetUsd: loaded.config.singleBudgetUsd,
+      costProbe: () => summarizeUsage(store.dir).totalCostUsd - startCost,
+      onChapterStart: (no) => console.log(`\n—— 第 ${no} 章 ——`),
+      onChapterDone: (no, r) => console.log(`\n✔ 第 ${no} 章完成:${r.text.length} 字`),
+    });
+    if (result.stoppedAt !== undefined) {
+      console.log(`\n⚠ 连写停在第 ${result.stoppedAt} 章之前:${result.reason}`);
+      console.log(`已完成:${result.completed.length ? result.completed.join("、") : "(无)"}`);
+    } else {
+      console.log(`\n✔ 连写完成:第 ${from}..${to} 章(共 ${result.completed.length} 章)`);
+    }
+  });
+
+program
+  .command("fix")
+  .description("修复最新章:git reset 该章 commit,带 open 问题重跑写章管线")
+  .argument("<书名>", "books/ 下的书目录名")
+  .action(async (bookName: string) => {
+    const store = resolveBook(bookName);
+    const deps = buildDeps(store, loadConfig());
+    const latest = store.listChapters().at(-1);
+    console.log(`重写最新章(第 ${latest ?? "?"} 章)……`);
+    const result = await fixLatest(store, deps);
+    console.log(`\n✔ 第 ${result.chapterNo} 章已重写:${result.text.length} 字,新 commit ch${String(result.chapterNo).padStart(3, "0")}`);
   });
 
 program

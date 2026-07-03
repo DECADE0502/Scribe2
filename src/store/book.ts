@@ -157,6 +157,12 @@ export class BookStore {
     return fs.existsSync(full) ? fs.readFileSync(full, "utf8") : fallback;
   }
 
+  /** git 不跟踪空目录:reset/rollback 后子目录可能消失,写前一律补建父目录。 */
+  private writeFile(fullPath: string, content: string): void {
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, content, "utf8");
+  }
+
   // ---------- meta ----------
 
   readMeta(): BookMeta {
@@ -205,7 +211,7 @@ export class BookStore {
 
   writeChapter(no: number, text: string, title = ""): void {
     const content = matter.stringify(`\n${text}\n`, { 标题: title, 字数: text.length });
-    fs.writeFileSync(this.chapterPath(no), content, "utf8");
+    this.writeFile(this.chapterPath(no), content);
   }
 
   readChapter(no: number): { no: number; title: string; text: string; words: number } {
@@ -263,7 +269,7 @@ export class BookStore {
         ["当前状态", state],
       ]),
     );
-    fs.writeFileSync(file, matter.stringify(`\n${body}`, { role, aliases }), "utf8");
+    this.writeFile(file, matter.stringify(`\n${body}`, { role, aliases }));
   }
 
   readCharacter(name: string): Character {
@@ -296,10 +302,9 @@ export class BookStore {
 
   upsertWorldbook(input: Worldbook): void {
     const file = this.p("世界书", `${input.title}.md`);
-    fs.writeFileSync(
+    this.writeFile(
       file,
       matter.stringify(`\n${input.body.trim()}\n`, { keys: input.keys, constant: input.constant }),
-      "utf8",
     );
   }
 
@@ -438,7 +443,7 @@ export class BookStore {
       一句话: summary.brief,
       关键事件: summary.events,
     });
-    fs.writeFileSync(this.p("摘要", `${pad3(no)}.md`), content, "utf8");
+    this.writeFile(this.p("摘要", `${pad3(no)}.md`), content);
   }
 
   readSummary(no: number): ChapterSummary {
@@ -462,7 +467,7 @@ export class BookStore {
   // ---------- 弧 ----------
 
   writeArc(no: number, content: string): void {
-    fs.writeFileSync(this.p("弧", `${pad3(no)}.md`), `${content.trim()}\n`, "utf8");
+    this.writeFile(this.p("弧", `${pad3(no)}.md`), `${content.trim()}\n`);
   }
 
   readArc(no: number): string {
