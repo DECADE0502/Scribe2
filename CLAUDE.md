@@ -21,6 +21,9 @@
 ## 约定
 
 - 用户沟通:**中文、简洁、别废话**;汇报领着结论走。
+- **随时汇报进度,不许埋头干活不吭声**:每开始一个 Task 先说一句"开始 Task N:xxx";
+  每完成一个 Task 用一两行报结果(几个测试绿/commit 号);跑长命令(装依赖/live 测试)
+  说明正在等什么;用户任何时候看聊天记录都应该知道现在干到哪一步了。
 - CLI 输出与 web UI **全中文**(SPEC §6:`中文说明(错误码)` 格式)。
 - commit 信息:`type(scope): 中文描述`,结尾 `Co-Authored-By: Claude <上下文里的署名>`。
 - **secrets.env 永不入库**(.gitignore 已覆盖,commit 前看 `git status`)。
