@@ -39,7 +39,14 @@ type Runner = (
   deps: AppDeps,
   args: Record<string, unknown>,
   io: RunIo,
+  signal: AbortSignal | undefined,
 ) => Promise<unknown>;
+
+/** run 参数里的章号:必须是 ≥1 的整数,NaN 不得漏进 engine。 */
+function chapterArg(value: unknown): number | null {
+  const no = Number(value);
+  return Number.isInteger(no) && no >= 1 ? no : null;
+}
 
 /** 工作流 → engine 调用(零新逻辑),返回可 JSON 化的小结。 */
 const RUNNERS: Record<string, Runner> = {
@@ -54,10 +61,10 @@ const RUNNERS: Record<string, Runner> = {
     });
     return { retrievedCount: result.retrievedCount };
   },
-  write: async (store, deps, args, io) => {
-    const from = Number(args["from"] ?? args["chapterNo"]);
-    const to = Number(args["to"] ?? from);
-    if (!Number.isInteger(from) || from < 1 || to < from) {
+  write: async (store, deps, args, io, signal) => {
+    const from = chapterArg(args["from"] ?? args["chapterNo"]);
+    const to = chapterArg(args["to"] ?? from);
+    if (from === null || to === null || to < from) {
       throw new Error("章号参数不合法(bad_chapter_range)");
     }
     const wired = { ...deps, onUsage: io.onUsage, onDelta: io.onDelta };
@@ -65,7 +72,14 @@ const RUNNERS: Record<string, Runner> = {
       const result = await writeChapter(store, from, String(args["instruction"] ?? ""), wired);
       return { chapterNo: from, words: result.text.length, rewritten: result.rewritten, dropped: result.dropped };
     }
-    return writeMany(store, from, to, wired);
+    // 连写与 CLI 同待遇:单次预算护栏 + 断连/取消在章间停下(不再能无限烧钱)
+    const startCost = summarizeUsage(store.dir).totalCostUsd;
+    return writeMany(store, from, to, {
+      ...wired,
+      runBudgetUsd: deps.config.singleBudgetUsd,
+      costProbe: () => summarizeUsage(store.dir).totalCostUsd - startCost,
+      ...(signal ? { signal } : {}),
+    });
   },
   audit: async (store, deps, args, io) => {
     const report = await runAudit(store, { lastN: Number(args["lastN"] ?? 5) || 5 }, {
@@ -78,10 +92,12 @@ const RUNNERS: Record<string, Runner> = {
     return { summary: report.summary, lines: report.lines, added: report.added.length };
   },
   revise: async (store, deps, args, io) => {
+    const no = chapterArg(args["chapterNo"]);
+    if (no === null) throw new Error("章号参数不合法(bad_chapter_range)");
     const result = await reviseSegment(
       store,
       {
-        chapterNo: Number(args["chapterNo"]),
+        chapterNo: no,
         selected: String(args["selected"] ?? ""),
         instruction: String(args["instruction"] ?? ""),
         ...(args["occurrenceIndex"] !== undefined
@@ -119,6 +135,8 @@ export function createApp(options: ServerOptions): Hono {
   const hasGit = (store: BookStore) => fs.existsSync(path.join(store.dir, ".git"));
 
   const storeOf = (name: string): BookStore | null => {
+    // 书名只能是单段目录名:%2E%2E 等编码穿越一律当不存在处理
+    if (!/^[^\\/]+$/.test(name) || name === "." || name === "..") return null;
     const dir = bookDirOf(name);
     return fs.existsSync(path.join(dir, "book.md")) ? new BookStore(dir) : null;
   };
@@ -194,7 +212,8 @@ export function createApp(options: ServerOptions): Hono {
   app.get("/api/books/:book/chapters/:no", (c) => {
     const store = storeOf(c.req.param("book"));
     if (!store) return c.json({ error: "找不到这本书(book_not_found)" }, 404);
-    const no = Number(c.req.param("no"));
+    const no = chapterArg(c.req.param("no"));
+    if (no === null) return c.json({ error: "章号不合法(bad_chapter_range)" }, 400);
     try {
       return c.json(store.readChapter(no));
     } catch (e) {
@@ -264,6 +283,18 @@ export function createApp(options: ServerOptions): Hono {
       return c.json({ error: `未知工作流「${workflow}」(unknown_workflow)` }, 400);
     }
     const args = body?.args ?? {};
+    // 章号类参数在开流之前就校验掉:非法值直接 400,而不是流里一个 error 事件
+    if (workflow === "write") {
+      const from = chapterArg(args["from"] ?? args["chapterNo"]);
+      const to = args["to"] === undefined ? from : chapterArg(args["to"]);
+      if (from === null || to === null || to < from) {
+        return c.json({ error: "章号参数不合法,应为 ≥1 的整数区间(bad_chapter_range)" }, 400);
+      }
+    }
+    if (workflow === "revise" && chapterArg(args["chapterNo"]) === null) {
+      return c.json({ error: "章号参数不合法(bad_chapter_range)" }, 400);
+    }
+    const signal = c.req.raw.signal; // 客户端断连即触发:连写在章间停下,不再空烧
 
     return streamSSE(c, async (stream) => {
       // SSE 写入排队,保证事件顺序
@@ -283,7 +314,7 @@ export function createApp(options: ServerOptions): Hono {
             void send("text_delta", { delta });
           },
         };
-        const result = await runner(store, deps, args, io);
+        const result = await runner(store, deps, args, io, signal);
         await send("done", { workflow, result });
       } catch (e) {
         await send("error", { message: e instanceof Error ? e.message : String(e) });

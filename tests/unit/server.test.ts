@@ -123,6 +123,23 @@ describe("server", () => {
     expect(body).toContain("event: done");
   });
 
+  it("书名 .. 穿越 → 404;write 章号 NaN → 开流前 400", async () => {
+    const { app } = makeApp();
+    const evil = await app.request(`/api/books/${encodeURIComponent("..")}/status`);
+    expect(evil.status).toBe(404);
+
+    const nan = await app.request(`/api/books/${B}/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow: "write", args: { from: 1, to: "abc" } }),
+    });
+    expect(nan.status).toBe(400);
+    expect(JSON.stringify(await nan.json())).toContain("bad_chapter_range");
+
+    const chapterNan = await app.request(`/api/books/${B}/chapters/abc`);
+    expect(chapterNan.status).toBe(400);
+  });
+
   it("未知 workflow → 400;工作流内部出错 → SSE error 事件", async () => {
     const { app } = makeApp();
     const bad = await app.request(`/api/books/${B}/run`, {

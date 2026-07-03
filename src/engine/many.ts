@@ -14,6 +14,8 @@ export interface ManyDeps extends WriteDeps {
   runBudgetUsd?: number;
   /** 返回本次运行已产生的成本(美元) */
   costProbe?: () => number;
+  /** 章间取消:置位后在下一章开写前停下(server 断连/用户取消) */
+  signal?: AbortSignal;
   onChapterStart?: (no: number) => void;
   onChapterDone?: (no: number, result: WriteResult) => void;
 }
@@ -123,6 +125,9 @@ export async function writeMany(
 ): Promise<ManyResult> {
   const completed: number[] = [];
   for (let no = from; no <= to; no++) {
+    if (deps.signal?.aborted) {
+      return { completed, stoppedAt: no, reason: "已取消,连写在章间停下(cancelled)" };
+    }
     if (deps.runBudgetUsd !== undefined && deps.costProbe) {
       const spent = deps.costProbe();
       if (spent > deps.runBudgetUsd) {

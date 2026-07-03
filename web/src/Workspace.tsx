@@ -45,9 +45,22 @@ export function Workspace({ book }: { book: string }) {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [log]);
 
+  // 未保存时拦截关页/刷新
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (dirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
   const open = useCallback(
     async (sel: Selected) => {
       if (!sel) return;
+      if (dirty && !window.confirm("当前内容尚未保存,切换将丢失修改,确认切走?")) return;
       if (sel.kind === "chapter") {
         const ch = await api.readChapter(book, sel.no);
         setContent(ch.text);
@@ -60,7 +73,7 @@ export function Workspace({ book }: { book: string }) {
       setSelected(sel);
       setDirty(false);
     },
-    [book],
+    [book, dirty],
   );
 
   const save = useCallback(async () => {
@@ -107,16 +120,21 @@ export function Workspace({ book }: { book: string }) {
     }
     setRunning(true);
     appendLog({ cls: "sys", text: `▶ ${WORKFLOWS.find((w) => w.value === workflow)?.label ?? workflow}` });
-    await runWorkflow(book, workflow, args, {
-      onDelta: appendDelta,
-      onUsage: (role) => appendLog({ cls: "sys", text: `· ${role} 调用完成` }),
-      onDone: (result) => {
-        appendLog({ cls: "sys", text: `✔ 完成:${JSON.stringify(result ?? {})}` });
-        refreshLists();
-      },
-      onError: (msg) => appendLog({ cls: "err", text: `✘ ${msg}` }),
-    });
-    setRunning(false);
+    try {
+      await runWorkflow(book, workflow, args, {
+        onDelta: appendDelta,
+        onUsage: (role) => appendLog({ cls: "sys", text: `· ${role} 调用完成` }),
+        onDone: (result) => {
+          appendLog({ cls: "sys", text: `✔ 完成:${JSON.stringify(result ?? {})}` });
+          refreshLists();
+        },
+        onError: (msg) => appendLog({ cls: "err", text: `✘ ${msg}` }),
+      });
+    } catch (e) {
+      appendLog({ cls: "err", text: `✘ ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setRunning(false); // 任何异常路径都不能把"运行"按钮永久卡死
+    }
   }, [book, workflow, chapterArg, message, refreshLists]);
 
   const sideItem = (key: string, label: string, sel: Selected) => {

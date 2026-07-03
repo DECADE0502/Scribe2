@@ -82,17 +82,33 @@ export async function runWorkflow(
   args: Record<string, unknown>,
   handlers: SseHandlers,
 ): Promise<void> {
-  const res = await fetch(`/api/books/${encodeURIComponent(book)}/run`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ workflow, args }),
-  });
+  // 任何异常(服务重启/断网/流中断)都必须落到 onError,不能往上抛——
+  // 否则调用方的 running 状态会永远卡死
+  let res: Response;
+  try {
+    res = await fetch(`/api/books/${encodeURIComponent(book)}/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow, args }),
+    });
+  } catch (e) {
+    handlers.onError?.(`无法连接服务,请确认 pnpm serve 在运行:${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
   if (!res.ok || !res.body) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     handlers.onError?.(data.error ?? `请求失败(${res.status})`);
     return;
   }
-  const reader = res.body.getReader();
+  try {
+    await readSse(res.body, handlers);
+  } catch (e) {
+    handlers.onError?.(`连接中断:${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function readSse(body: ReadableStream<Uint8Array>, handlers: SseHandlers): Promise<void> {
+  const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   for (;;) {
