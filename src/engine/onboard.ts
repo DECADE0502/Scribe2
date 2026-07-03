@@ -122,7 +122,8 @@ export async function onboardTurn(
   let reply = "";
   for await (const ev of deps.chatter({
     messages: [...creativeEnv.prefix, { role: "user", content: chatPrompt }],
-    onUsage: (u) => deps.onUsage?.("writer", u),
+    // 记账角色用 onboard:建书对话成本不摊进写作章均
+    onUsage: (u) => deps.onUsage?.("onboard", u),
   })) {
     reply += ev.delta;
     deps.onDelta?.(ev.delta);
@@ -137,7 +138,7 @@ export async function onboardTurn(
     schema: onboardExtractSchema,
     messages: [...structuredEnv.prefix, { role: "user", content: extractPrompt }, ...structuredEnv.suffix],
     generate: (input) =>
-      deps.extractor({ messages: input.messages, onUsage: (u) => deps.onUsage?.("extractor", u) }),
+      deps.extractor({ messages: input.messages, onUsage: (u) => deps.onUsage?.("onboard", u) }),
   });
 
   // ③ 合并落盘:空值不覆盖,同名 dedup

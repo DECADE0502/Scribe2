@@ -17,7 +17,7 @@ import { reviseSegment } from "./../engine/revise.js";
 import { writeMany, fixLatest } from "./../engine/many.js";
 import { importSillyTavern } from "./../import/sillytavern.js";
 import { exportBook, exportChapter, rollbackBook, type ExportFormat } from "./../engine/export.js";
-import { buildDeps as buildBaseDeps, type AppDeps } from "./../deps.js";
+import { buildDeps as buildBaseDeps, estimateWriteCost, type AppDeps } from "./../deps.js";
 import * as readline from "node:readline";
 
 // ---------- 通用 ----------
@@ -27,7 +27,15 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+/** 书名只能是单段目录名:防 ../ 穿越 books/ 在意料之外的位置建库/覆盖文件。 */
+function assertBookName(name: string): void {
+  if (!/^[^\\/]+$/.test(name) || name === "." || name === "..") {
+    fail(`书名「${name}」不合法:只能是不含路径分隔符的目录名(bad_book_name)`);
+  }
+}
+
 function resolveBook(name: string): BookStore {
+  assertBookName(name);
   const dir = path.join(process.cwd(), "books", name);
   if (!fs.existsSync(path.join(dir))) {
     fail(`找不到书「${name}」,应位于 ${dir}(book_not_found)`);
@@ -53,12 +61,13 @@ function buildDeps(store: BookStore, loaded: LoadedConfig): AppDeps {
   };
 }
 
-/** 单次 run 预算检查(SPEC §5):历史章均成本 × 本次章数,超 singleBudgetUsd 拒绝。 */
+/** 单次 run 预算检查(SPEC §5):写作角色的历史章均成本 × 本次章数,超 singleBudgetUsd 拒绝。 */
 function checkBudget(store: BookStore, loaded: LoadedConfig, chapterCount: number): void {
-  const summary = summarizeUsage(store.dir);
-  const written = store.listChapters().length;
-  if (written === 0 || summary.totalCostUsd === 0) return;
-  const estimate = (summary.totalCostUsd / written) * chapterCount;
+  const estimate = estimateWriteCost(
+    summarizeUsage(store.dir),
+    store.listChapters().length,
+    chapterCount,
+  );
   if (estimate > loaded.config.singleBudgetUsd) {
     fail(
       `本次预计成本 $${estimate.toFixed(2)} 超过单次预算 $${loaded.config.singleBudgetUsd}(config.json singleBudgetUsd),已拒绝(budget_exceeded)`,
@@ -144,7 +153,8 @@ async function onboardLoop(store: BookStore): Promise<void> {
   console.log("一行一轮;输入「退出」或 Ctrl+C 结束。");
   for await (const line of inputLines("你:")) {
     const message = line.trim();
-    if (!message || message === "退出" || message === "exit") break;
+    if (message === "退出" || message === "exit") break;
+    if (!message) continue; // 空行跳过:管道输入的分段空行不该截断后续轮次
     const deps = buildDeps(store, loadConfig());
     process.stdout.write("小克:");
     const result = await onboardTurn(store, message, {
@@ -167,6 +177,7 @@ program
   .description("建书:落目录骨架并进入建书对话")
   .argument("<书名>", "新书名称")
   .action(async (bookName: string) => {
+    assertBookName(bookName);
     const dir = path.join(process.cwd(), "books", bookName);
     if (!fs.existsSync(path.join(dir, "book.md"))) {
       BookStore.create(dir, { name: bookName });
@@ -212,7 +223,8 @@ program
     console.log("进入对话(输入「退出」或 Ctrl+C 结束):");
     for await (const line of inputLines("你:")) {
       const message = line.trim();
-      if (!message || message === "退出" || message === "exit") break;
+      if (message === "退出" || message === "exit") break;
+      if (!message) continue;
       process.stdout.write("助手:");
       await chatTurn(store, message, chatDeps);
       console.log("");

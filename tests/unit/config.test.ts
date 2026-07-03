@@ -43,6 +43,13 @@ describe("loadConfigFrom", () => {
     expect(loaded.apiKeyFor("ds")).toBe("sk-test-123");
   });
 
+  it("role 引用不存在的 provider → 加载期即报 config_invalid", () => {
+    const cfg = { ...base, roles: { writer: { provider: "不存在的", modelId: "m" } } };
+    const tmp = makeDir("DEEPSEEK_API_KEY=sk-x\n", cfg);
+    expect(() => loadConfigFrom(tmp)).toThrow(/config_invalid/);
+    expect(() => loadConfigFrom(tmp)).toThrow(/不存在的/);
+  });
+
   it("provider 的 key 缺失 → 中文报错含错误码", () => {
     const cfg = {
       ...base,

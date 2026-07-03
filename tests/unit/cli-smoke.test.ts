@@ -38,6 +38,13 @@ describe("CLI 冒烟", () => {
     expect(res.status).not.toBe(0);
   });
 
+  it("书名含路径分隔符 → 拒绝(bad_book_name)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "s2cli-"));
+    const res = runCli(["status", "../外面的书"], tmp);
+    expect(res.stderr + res.stdout).toContain("bad_book_name");
+    expect(res.status).not.toBe(0);
+  });
+
   it("章号格式非法 → 中文报错含错误码", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "s2cli-"));
     fs.mkdirSync(path.join(tmp, "books", "某书"), { recursive: true });

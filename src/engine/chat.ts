@@ -66,7 +66,8 @@ export async function chatTurn(store: BookStore, message: string, deps: ChatDeps
   let reply = "";
   for await (const ev of deps.chatter({
     messages: [...envelope.prefix, { role: "user", content: prompt }],
-    onUsage: (u) => deps.onUsage?.("writer", u),
+    // 记账角色用 chat(而非 writer):对话成本不属于写作管线,不得摊进章均预算估算
+    onUsage: (u) => deps.onUsage?.("chat", u),
   })) {
     reply += ev.delta;
     deps.onDelta?.(ev.delta);

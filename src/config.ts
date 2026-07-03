@@ -8,9 +8,19 @@ const roleModelSchema = z.object({
   modelId: z.string().min(1),
 });
 
+const pricingSchema = z.object({
+  prompt: z.number().nonnegative(),
+  cachedPrompt: z.number().nonnegative(),
+  completion: z.number().nonnegative(),
+});
+
 const configSchema = z.object({
   providers: z.record(
-    z.object({ baseUrl: z.string().min(1), apiKeyEnv: z.string().min(1) }),
+    z.object({
+      baseUrl: z.string().min(1),
+      apiKeyEnv: z.string().min(1),
+      pricing: pricingSchema.optional(),
+    }),
   ),
   roles: z.object({
     writer: roleModelSchema.nullable().optional(),
@@ -78,6 +88,15 @@ export function loadConfigFrom(dir: string): LoadedConfig {
     throw new Error(`config.json 形状不合法:${detail}(config_invalid)`);
   }
   const config: Config = parsed.data;
+
+  // roles 引用不存在的 provider 要在加载期报,不能拖到用户输完一大段话之后才爆
+  for (const [role, roleModel] of Object.entries(config.roles)) {
+    if (roleModel && !config.providers[roleModel.provider]) {
+      throw new Error(
+        `角色 ${role} 引用了不存在的 provider「${roleModel.provider}」(config_invalid)`,
+      );
+    }
+  }
 
   const secretsPath = path.join(dir, "secrets.env");
   const secrets = fs.existsSync(secretsPath)

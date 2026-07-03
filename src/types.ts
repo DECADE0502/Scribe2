@@ -5,8 +5,15 @@ export interface RoleModel {
   modelId: string;
 }
 
+/** 单价(美元/百万 token)。未配价目的非 DeepSeek provider 记账不可信,会被警告。 */
+export interface ProviderPricing {
+  prompt: number;
+  cachedPrompt: number;
+  completion: number;
+}
+
 export interface Config {
-  providers: Record<string, { baseUrl: string; apiKeyEnv: string }>;
+  providers: Record<string, { baseUrl: string; apiKeyEnv: string; pricing?: ProviderPricing }>;
   roles: Partial<Record<Role, RoleModel | null>>;
   deepestPromptScope: "creative" | "all";
   singleBudgetUsd: number;
